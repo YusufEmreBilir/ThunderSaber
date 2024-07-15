@@ -2,7 +2,7 @@
 
 ---------- ThunderSaberOS_V3 By YEB ----------
 
-MPU 6050 ve DFPlayer ile çalışması için tasarlanmıştır,
+MPU 6050, DFPlayer ve 60LED/m WS2812b ile çalışması için tasarlanmıştır,
 arduino nano ve uno üzerinde test edilmiştir.
 
 Son revizyon: 2024
@@ -31,8 +31,8 @@ Son revizyon: 2024
 #define ACTIVATION_BUTTON_PIN 4     //Açma/Kapama butonu pini.
 #define BUSY_PIN 3                  //DFplayer'ın meşgullük bildiren pini, Çalıyor = 0, Boşta = 1
 
-#define SWING_STOP_TRESHOLD 1       //Sallama sesini başlatmak için gerek hareket miktarının hassasiyeti.
-#define SWING_START_TRESHOLD 1
+#define SWING_START_TRESHOLD 1      //Sallama rutinini başlatmak için gereken hareket miktarının hassasiyeti.
+#define SWING_STOP_TRESHOLD 1       //Sallama rutinini durdurmak için gereken hareketsizlik miktarının hassasiyeti.
 
 
 /*---------- İç Değişkenler ----------*/       //Elle değiştirilmemesi gereken değişkenler.
