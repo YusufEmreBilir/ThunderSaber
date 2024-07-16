@@ -23,7 +23,7 @@ Son revizyon: 2024
 
 /*---------- Pre-Proccessor Değerler ----------*/
 
-#define DEBUG true                  //Seri monitör vs. için debug ayarı.
+#define DEBUG true                  //Seri monitör vs. için debug ayarı. Açık olması Arduinoyu bir miktar yavaşlatır.
 
 #define NUM_LEDS 120                //Bıçaktaki LED sayısı.
 #define CHIPSET WS2812B             //LED şerit tipi.
@@ -44,7 +44,7 @@ byte stationary, moving;
 byte internalVolume, prevInternalVolume;   
 byte errorCounter = 0;                 
 sensors_event_t accel, gyro, temp;
-unsigned long ignitionMillis, flickerMillis, soundEngineMillis;
+unsigned long ignitionMillis, flickerMillis, soundEngineMillis, mainButtonMillis;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
 bool saberIsOn = false, igniting = false, flickered = false;
@@ -64,13 +64,14 @@ byte selectedR = 0;           //
 byte selectedG = 0;           //Bıçak Rengi.
 byte selectedB = 255;         //
 
-byte VOLUME = 15;             //Ses seviyesi, Max: 20
+byte VOLUME = 10;             //Ses seviyesi, Max: 20
 byte BRIGHTNESS = 10;         //Parlaklık, Max: 255
 
 byte ignitionSpeed = 10;      //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
 byte ledPerStep = 1;          //Her ateşleme adımında yakılacak LED miktarı.
 
-byte soundEngineFreq = 50;    //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, Min: 50
+byte soundEngineFreq = 60;    //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
+byte mainButtonFreq = 50;     //Ana buton denetleme frekansı.
 byte flickerFreqLimit = 100;  //Bıçağın titreme frekansının üst sınırı, 0 ile değer arasında rastgele oluşturulur.
 byte motorPower = 75;         //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
 
@@ -97,18 +98,18 @@ void ledInitialize()
 void DFPlayerInitialize()
 {
   FPSerial.begin(9600);
-  if(!df.begin(FPSerial, DEBUG)) 
+  if(!df.begin(FPSerial, false)) 
   {
     errorCounter++;
     #if DEBUG
     Serial.println(F("DFplayer hata"));
     #endif
   }
-  delay(1000);        //DFplayerMini yavaş bir komponenttir, komutlar arası zamana ihtiyaç duyar.  
-  df.stop();          
-  delay(500);         //peşpeşe gönderilen komutlar ya algılanmayacak yada komple senkronu bozacaktır.
+  delay(500);        //DFplayerMini yavaş bir komponenttir, komutlar arası zamana ihtiyaç duyar.  
   df.reset();
-  delay(500);
+  delay(100);         //peşpeşe gönderilen komutlar ya algılanmayacak yada komple senkronu bozacaktır.
+  df.stop();          
+  delay(100);
   df.volume(VOLUME);
   internalVolume = VOLUME;
   prevInternalVolume = internalVolume;
@@ -135,9 +136,10 @@ void catchError()
     delay(500);
     
     #if DEBUG
-    df.play(405);
+    df.play(6);
+    Serial.println(F(">UYARI: Hata/Hatalar tespit edildi<"));
     #else
-    df.play(404);
+    df.play(5);
     #endif
 
     while (true)
@@ -154,7 +156,7 @@ void catchError()
 void setup() //MARK:setup
 {
   #if DEBUG                 //Debug modu aktifse;
-  Serial.begin(115200);     //seri monitörü başlat.
+  Serial.begin(9600);     //seri monitörü başlat.
   #endif
 
   //Başlangıç rutini:
@@ -163,44 +165,59 @@ void setup() //MARK:setup
   MPUInitialize();
   ledInitialize();
   catchError();
+
+  digitalWrite(STATUS_LED, 1);
+  delay(100);
+  df.play(4);
+  digitalWrite(STATUS_LED, 0);
+  #if DEBUG
+  Serial.println(F(">Baslatma basarili<"));
+  #endif
 }
 
 
 void loop() //MARK:loop
 {
   activationButtonCheck();
-  flicker();
   soundEngine();
+  flicker();
 }
 
 
 void activationButtonCheck()  //MARK:ActivationCheck
 {
+  if (millis() - mainButtonMillis < mainButtonFreq) {return;}
   if (igniting) {switchBlade(saberIsOn);}
   if (digitalRead(ACTIVATION_BUTTON_PIN) == 0) {return;}
   if (!saberIsOn && !igniting)
   {
+    saberIsOn = true;
     df.play(1);     //Normalde Setup dışında delay kullanmak, multitasking yapılan bir kodda,  
-    delay(800);     //mantıklı değil ancak burada zaten bütün donanımın DFplayer'ın çalmasını beklemesi gerekli.
+    delay(600);     //mantıklı değil ancak burada zaten bütün donanımın DFplayer'ın çalmasını beklemesi gerekli.
 
     analogWrite(MOTOR_PIN, 120); //Motor başlat, başlatma hızı min: 120
-    saberIsOn = true;
 
     #if DEBUG
+    digitalWrite(STATUS_LED, 1);
     Serial.println(F("igniting"));
     #endif
   }
   else if (!igniting)
   {
+    saberIsOn = false;
+    delay(50);
+    df.volume(VOLUME);
+    delay(50);
     df.play(3);
     analogWrite(MOTOR_PIN, 120);
-    saberIsOn = false;
 
     #if DEBUG
+    digitalWrite(STATUS_LED, 0);
     Serial.println(F("retracting"));
     #endif
   }
   igniting = true;
+  mainButtonMillis = millis();
 }
 
 
