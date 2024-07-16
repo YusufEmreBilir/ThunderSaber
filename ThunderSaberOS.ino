@@ -16,7 +16,7 @@ Son revizyon: 2024
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
-#include <Adafruit_NeoPixel.h>
+#include <FastLED.h>
 #include <DFPlayerMini_Fast.h>
 #include <SoftwareSerial.h>
 #include <Adafruit_MPU6050.h>
@@ -31,7 +31,7 @@ Son revizyon: 2024
 #define STATUS_LED 7                //Durum bildirme ledi.
 #define BLADE_LED_PIN 6             //LED şeritin data pini.
 #define MOTOR_PIN 5                 //Titreşim motorunun pini.
-#define ACTIVATION_BUTTON_PIN 4     //Açma/Kapama butonu pini.
+#define MAIN_BUTTON_PIN 4           //Açma/Kapama butonu pini.
 #define BUSY_PIN 3                  //DFplayer'ın meşgullük bildiren pini, Çalıyor = 0, Boşta = 1
 
 #define SWING_START_TRESHOLD 1      //Sallama rutinini başlatmak için gereken hareket miktarının hassasiyeti.
@@ -53,16 +53,17 @@ bool saberIsOn = false, igniting = false, flickered = false;
 /*---------- Objeler ----------*/
 
 SoftwareSerial FPSerial(/*tx =*/11, /*rx =*/10);
-Adafruit_NeoPixel led (NUM_LEDS, BLADE_LED_PIN, NEO_GRB + NEO_KHZ800);
+CRGB led[NUM_LEDS];
 DFPlayerMini_Fast df;
 Adafruit_MPU6050 mpu;
 
 
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
-byte selectedR = 0;           //
-byte selectedG = 0;           //Bıçak Rengi.
-byte selectedB = 255;         //
+byte blade_R = 0;           //
+byte blade_G = 0;           //Bıçak Rengi.
+byte blade_B = 255;         //
+CRGB bladeColor(blade_R, blade_G, blade_B);
 
 byte VOLUME = 10;             //Ses seviyesi, Max: 20
 byte BRIGHTNESS = 10;         //Parlaklık, Max: 255
@@ -83,15 +84,19 @@ void setPins()
   pinMode(MOTOR_PIN, OUTPUT);
   pinMode(STATUS_LED, OUTPUT);
 
-  pinMode(ACTIVATION_BUTTON_PIN, INPUT);
+  pinMode(MAIN_BUTTON_PIN, INPUT);
   pinMode(BUSY_PIN, INPUT);
 }
 
 void ledInitialize()
 {
-  led.begin();          
-  led.show();          
-  led.setBrightness(BRIGHTNESS);
+  FastLED.addLeds<CHIPSET, BLADE_LED_PIN>(led, NUM_LEDS);
+  for (byte i; i <= NUM_LEDS; i++)
+  {
+    led[i] = CRGB::Black;
+  }          
+  FastLED.show();          
+  FastLED.setBrightness(BRIGHTNESS);
   randomSeed(analogRead(0));
 }
 
@@ -107,9 +112,9 @@ void DFPlayerInitialize()
   }
   delay(500);        //DFplayerMini yavaş bir komponenttir, komutlar arası zamana ihtiyaç duyar.  
   df.reset();
-  delay(100);         //peşpeşe gönderilen komutlar ya algılanmayacak yada komple senkronu bozacaktır.
+  delay(200);         //peşpeşe gönderilen komutlar ya algılanmayacak yada komple senkronu bozacaktır.
   df.stop();          
-  delay(100);
+  delay(200);
   df.volume(VOLUME);
   internalVolume = VOLUME;
   prevInternalVolume = internalVolume;
@@ -129,7 +134,7 @@ void MPUInitialize()
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
 }
 
-void catchError()
+void catchErrors()
 {
   if (errorCounter > 0) 
   {
@@ -152,23 +157,11 @@ void catchError()
   }
 }
 
-
-void setup() //MARK:setup
+void finalizeSetup()
 {
-  #if DEBUG                 //Debug modu aktifse;
-  Serial.begin(9600);     //seri monitörü başlat.
-  #endif
-
-  //Başlangıç rutini:
-  setPins();
-  DFPlayerInitialize();
-  MPUInitialize();
-  ledInitialize();
-  catchError();
-
   digitalWrite(STATUS_LED, 1);
-  delay(100);
   df.play(4);
+  delay(100);
   digitalWrite(STATUS_LED, 0);
   #if DEBUG
   Serial.println(F(">Baslatma basarili<"));
@@ -176,19 +169,35 @@ void setup() //MARK:setup
 }
 
 
+void setup() //MARK:setup
+{
+  #if DEBUG                 //Debug modu aktifse;
+  Serial.begin(9600);       //seri monitörü başlat.
+  #endif
+
+  //Başlangıç rutini:
+  setPins();
+  DFPlayerInitialize();
+  MPUInitialize();
+  ledInitialize();
+  catchErrors();
+  finalizeSetup();
+}
+
+
 void loop() //MARK:loop
 {
-  activationButtonCheck();
+  mainButtonCheck();
   soundEngine();
   flicker();
 }
 
 
-void activationButtonCheck()  //MARK:ActivationCheck
+void mainButtonCheck()  //MARK:MainButtonCheck
 {
   if (millis() - mainButtonMillis < mainButtonFreq) {return;}
   if (igniting) {switchBlade(saberIsOn);}
-  if (digitalRead(ACTIVATION_BUTTON_PIN) == 0) {return;}
+  if (digitalRead(MAIN_BUTTON_PIN) == 0) {return;}
   if (!saberIsOn && !igniting)
   {
     saberIsOn = true;
@@ -223,71 +232,67 @@ void activationButtonCheck()  //MARK:ActivationCheck
 
 void switchBlade(bool state)  //MARK:SwitchBlade
 {
-  if (millis() - ignitionMillis > ignitionSpeed)
+  if (millis() - ignitionMillis < ignitionSpeed){return;}
+  if (state)
   {
-    if (state)
+    for (int i = 0; i<ledPerStep; i++)   //Igniting
     {
-      for (int i = 0; i<ledPerStep; i++)   //Igniting
+      led[currentLed1] = bladeColor;
+      led[currentLed2] = bladeColor;
+      if (currentLed1 < 58)
       {
-        led.setPixelColor(currentLed1, led.Color(selectedR, selectedG, selectedB));
-        led.setPixelColor(currentLed2, led.Color(selectedR, selectedG, selectedB));
-        if (currentLed1 < 58)
-        {
-            led.setPixelColor(currentLed1+1, led.Color(255, 255, 255));
-            led.setPixelColor(currentLed2-1, led.Color(255, 255, 255)); //iyyrenç kod, bi ara düzeltçem.
-            led.setPixelColor(currentLed1+2, led.Color(255, 255, 255));
-            led.setPixelColor(currentLed2-2, led.Color(255, 255, 255));
-            led.setPixelColor(currentLed1+3, led.Color(255, 255, 255));
-            led.setPixelColor(currentLed2-3, led.Color(255, 255, 255));
-        }
-        currentLed2--;
-        currentLed1++;
+        led[currentLed1+1] = bladeColor;
+        led[currentLed2-1] = bladeColor;
+        led[currentLed1+2] = bladeColor;    //nasıl durduğunun farkındayım bi ara düzeltecem inş.
+        led[currentLed2-2] = bladeColor;
+        led[currentLed1+3] = bladeColor;
+        led[currentLed2-3] = bladeColor;
       }
+      currentLed2--;
+      currentLed1++;
     }
-    else
+  }
+  else
+  {
+    for (int i = 0; i<ledPerStep; i++)   //Retracting
     {
-      for (int i = 0; i<ledPerStep; i++)   //Retracting
-      {
-        led.setPixelColor(currentLed1, led.Color(0,0,0));
-        led.setPixelColor(currentLed2, led.Color(0,0,0));
-        currentLed2++;
-        currentLed1--;
-      }
+      led[currentLed1] = CRGB::Black;
+      led[currentLed2] = CRGB::Black;
+      currentLed2++;
+      currentLed1--;
     }
-
-    led.show();
-
-    ignitionMillis = millis();
-    
-    if (currentLed1 >= 61)   //ateşleme/geri çekme tamamlandı.
-    {
-      igniting = false;
-      analogWrite(MOTOR_PIN, motorPower); //motor idle
-      currentLed1 = 60;
-      currentLed2 = 60;
-
-      #if DEBUG
-      Serial.println(F("ignited"));
-      #endif
-
-      return;
-    }
-    else if (currentLed1 <= -1)
-    {
-      igniting = false;
-      analogWrite(MOTOR_PIN, 0); //motor durdur
-      currentLed1 = 0;
-      currentLed2 = NUM_LEDS;
-
-      #if DEBUG
-      Serial.println(F("retracted"));
-      #endif
-
-      return;
-    }
-
   }
 
+  FastLED.show();
+
+  ignitionMillis = millis();
+  
+  if (currentLed1 >= 61)   //ateşleme/geri çekme tamamlandı.
+  {
+    igniting = false;
+    analogWrite(MOTOR_PIN, motorPower); //motor idle
+    currentLed1 = 60;
+    currentLed2 = 60;
+
+    #if DEBUG
+    Serial.println(F("ignited"));
+    #endif
+
+    return;
+  }
+  else if (currentLed1 <= -1)
+  {
+    igniting = false;
+    analogWrite(MOTOR_PIN, 0); //motor durdur
+    currentLed1 = 0;
+    currentLed2 = NUM_LEDS;
+
+    #if DEBUG
+    Serial.println(F("retracted"));
+    #endif
+
+    return;
+  }
 }
 
 
@@ -298,14 +303,14 @@ void flicker()  //MARK:Flicker
     randomFlicker =  random(0, flickerFreqLimit);
     if (!flickered)
     {
-      led.setBrightness(BRIGHTNESS/1.5);
-      led.show();
+      FastLED.setBrightness(BRIGHTNESS/1.5);
+      FastLED.show();
       flickered = true;
     }
     else
     {
-      led.setBrightness(BRIGHTNESS*1.5);
-      led.show();
+      FastLED.setBrightness(BRIGHTNESS*1.5);
+      FastLED.show();
       flickered = false;
     }
 
