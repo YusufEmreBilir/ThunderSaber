@@ -14,6 +14,7 @@ Son revizyon: 2024
 
 /*---------- Kütüphaneler ----------*/
 
+#include "Sounds.h"
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <FastLED.h>
@@ -42,12 +43,12 @@ Son revizyon: 2024
 
 byte stationary, moving;
 byte internalVolume, prevInternalVolume;   
-byte errorCounter = 0;                 
+byte errorCounter = 0;              
 sensors_event_t accel, gyro, temp;
 unsigned long ignitionMillis, flickerMillis, soundEngineMillis, mainButtonMillis;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
-bool saberIsOn = false, igniting = false, flickered = false;
+bool saberIsOn = false, mainButtonState = false, igniting = false, flickered = false;
 
 
 /*---------- Objeler ----------*/
@@ -65,15 +66,16 @@ byte blade_G = 0;           //Bıçak Rengi.
 byte blade_B = 255;         //
 CRGB bladeColor(blade_R, blade_G, blade_B);
 
-byte VOLUME = 10;             //Ses seviyesi, Max: 20
+byte SFXpack = FOLDER_DEFAULT_SFX;
+byte VOLUME = 15;             //Ses seviyesi, yükseltmek sallama efektini güçsüzleştirir. Önerilen Max: 20
 byte BRIGHTNESS = 10;         //Parlaklık, Max: 255
 
 byte ignitionSpeed = 10;      //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
 byte ledPerStep = 1;          //Her ateşleme adımında yakılacak LED miktarı.
 
-byte soundEngineFreq = 60;    //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
-byte mainButtonFreq = 50;     //Ana buton denetleme frekansı.
-byte flickerFreqLimit = 100;  //Bıçağın titreme frekansının üst sınırı, 0 ile değer arasında rastgele oluşturulur.
+byte soundEngineFreq = 50;    //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
+byte mainButtonFreq = 50;     //Ana buton denetleme frekansı. Yüksek değerler algılanmayan komutlarla sonuçlanır.
+byte flickerFreqLimit = 100;  //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 byte motorPower = 75;         //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
 
 
@@ -141,10 +143,10 @@ void catchErrors()
     delay(500);
     
     #if DEBUG
-    df.play(6);
+    df.playFolder(FOLDER_SYSTEM_SOUNDS, SFX_BOOT_FAIL_FUNNY);
     Serial.println(F(">UYARI: Hata/Hatalar tespit edildi<"));
     #else
-    df.play(5);
+    df.playFolder(FOLDER_SYSTEM_SOUNDS, SFX_BOOT_FAIL);
     #endif
 
     while (true)
@@ -160,8 +162,8 @@ void catchErrors()
 void finalizeSetup()
 {
   digitalWrite(STATUS_LED, 1);
-  df.play(4);
-  delay(100);
+  df.playFolder(FOLDER_SYSTEM_SOUNDS, SFX_BOOT_SUCCESS);
+  delay(600);
   digitalWrite(STATUS_LED, 0);
   #if DEBUG
   Serial.println(F(">Baslatma basarili<"));
@@ -195,14 +197,20 @@ void loop() //MARK:loop
 
 void mainButtonCheck()  //MARK:MainButtonCheck
 {
-  if (millis() - mainButtonMillis < mainButtonFreq) {return;}
   if (igniting) {switchBlade(saberIsOn);}
-  if (digitalRead(MAIN_BUTTON_PIN) == 0) {return;}
+  if (millis() - mainButtonMillis < mainButtonFreq) {return;}
+  if (digitalRead(MAIN_BUTTON_PIN) == 1) {mainButtonState = true;}    //Peşpeşe 6 if görünce korktun biliyorum,
+  if (!mainButtonState) {return;}                                     //Güven bana en iyi yolu bu.
+  if (digitalRead(MAIN_BUTTON_PIN) == 0) {mainButtonState = false;}
   if (!saberIsOn && !igniting)
   {
     saberIsOn = true;
-    df.play(1);     //Normalde Setup dışında delay kullanmak, multitasking yapılan bir kodda,  
-    delay(600);     //mantıklı değil ancak burada zaten bütün donanımın DFplayer'ın çalmasını beklemesi gerekli.
+    setBladeColor(blade_R, blade_G, blade_B);
+    df.playFolder(SFXpack, SFX_IGNITE_AND_HUM);  
+    //Normalde Setup dışında delay kullanmak, multitasking yapılan bir kodda,  
+    //mantıklı değil ancak burada zaten bütün donanımın DFplayer'ın çalmasını beklemesi gerekli.
+    delay(600);
+
 
     analogWrite(MOTOR_PIN, 120); //Motor başlat, başlatma hızı min: 120
 
@@ -214,10 +222,11 @@ void mainButtonCheck()  //MARK:MainButtonCheck
   else if (!igniting)
   {
     saberIsOn = false;
+    setBladeColor(CRGB::Black);
     delay(50);
     df.volume(VOLUME);
     delay(50);
-    df.play(3);
+    df.playFolder(SFXpack, SFX_RETRACT);
     analogWrite(MOTOR_PIN, 120);
 
     #if DEBUG
@@ -230,34 +239,29 @@ void mainButtonCheck()  //MARK:MainButtonCheck
 }
 
 
-void switchBlade(bool state)  //MARK:SwitchBlade
+void switchBlade(bool operation)  //MARK:SwitchBlade
 {
   if (millis() - ignitionMillis < ignitionSpeed){return;}
-  if (state)
+  for (int i = 0; i<ledPerStep; i++)   //Igniting
   {
-    for (int i = 0; i<ledPerStep; i++)   //Igniting
+    led[currentLed1] = bladeColor;
+    led[currentLed2] = bladeColor;
+    if (currentLed1 < 58)
     {
-      led[currentLed1] = bladeColor;
-      led[currentLed2] = bladeColor;
-      if (currentLed1 < 58)
-      {
-        led[currentLed1+1] = bladeColor;
-        led[currentLed2-1] = bladeColor;
-        led[currentLed1+2] = bladeColor;    //nasıl durduğunun farkındayım bi ara düzeltecem inş.
-        led[currentLed2-2] = bladeColor;
-        led[currentLed1+3] = bladeColor;
-        led[currentLed2-3] = bladeColor;
-      }
+      led[currentLed1+1] = bladeColor;
+      led[currentLed2-1] = bladeColor;
+      led[currentLed1+2] = bladeColor;    //nasıl durduğunun farkındayım bi ara düzeltecem inş.
+      led[currentLed2-2] = bladeColor;
+      led[currentLed1+3] = bladeColor;
+      led[currentLed2-3] = bladeColor;
+    }
+    if (operation)
+    {
       currentLed2--;
       currentLed1++;
     }
-  }
-  else
-  {
-    for (int i = 0; i<ledPerStep; i++)   //Retracting
+    else
     {
-      led[currentLed1] = CRGB::Black;
-      led[currentLed2] = CRGB::Black;
       currentLed2++;
       currentLed1--;
     }
@@ -352,10 +356,11 @@ else
   if (moving <= SWING_START_TRESHOLD) {moving++;}
   if (moving < SWING_START_TRESHOLD) {return;}
   stationary = 0;
-  if (internalVolume != VOLUME)
-  {
-    internalVolume = VOLUME;  //sesi eski seviyesine geri getir.
-    df.volume(VOLUME);
+  if (internalVolume != VOLUME)   //ses seviyesini DFplayer'dan okursak komut göndermiş oluruz, bu yüzden
+  {                               //hemen arkasından ses seviyesini ayarlamak için yolladığımız komut algılanmayacaktır.
+                                  //Çözümü ise ses seviyesi için ayrı bir değişken kullanmaktır.
+    internalVolume = VOLUME;
+    df.volume(internalVolume);           //sesi eski seviyesine geri getir.
     analogWrite(MOTOR_PIN, motorPower);  //titreşim motorunu eski seviyesine geri getir.
 
     #if DEBUG
@@ -366,3 +371,32 @@ else
 
 soundEngineMillis = millis();
 }
+
+void haltUntilEndOfTrack()
+{
+  while (BUSY_PIN)
+  {
+    delay(1);
+    //Sesin başlamasını bekle.
+  }
+  while (!BUSY_PIN)
+  {
+    delay(1);
+    //DUR YOLCU!
+  }
+}
+
+//MARK:SetBladeColor
+void setBladeColor(byte R, byte G, byte B)
+{
+  if (bladeColor == CRGB(R, G, B)) {return;}
+  bladeColor = CRGB(R, G, B);
+}
+
+void setBladeColor(CRGB colorpreset)
+{
+  if (bladeColor == colorpreset) {return;}
+  bladeColor = colorpreset;
+}
+
+
