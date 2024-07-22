@@ -44,7 +44,7 @@ Son revizyon: 2024
 byte stationary, moving, movementValue;
 byte internalVolume, prevInternalVolume;   
 byte errorCounter = 0;   
-byte ledsToFlicker[5];           
+byte ledsToFlicker[60];           
 sensors_event_t accel, gyro, temp;
 unsigned long ignitionMillis, flickerMillis, soundEngineMillis, mainButtonMillis, fadeSoundMillis;
 unsigned int randomFlicker = 0; 
@@ -62,8 +62,8 @@ Adafruit_MPU6050 mpu;
 
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
-byte blade_R = 0;
-byte blade_G = 255;           //Bıçak Rengi.
+byte blade_R = 255;
+byte blade_G = 0;           //Bıçak Rengi.
 byte blade_B = 0;
 CRGB bladeColor(blade_R, blade_G, blade_B);
 
@@ -72,13 +72,14 @@ byte VOLUME = 15;               //Ses seviyesi, yükseltmek sallama efektini gü
 byte BRIGHTNESS = 255;          //Parlaklık, Max: 255
 
 byte ignitionSpeed = 5;        //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
-byte ledPerStep = 3;            //Her ateşleme adımında yakılacak LED miktarı.
+byte ledPerStep = 2;            //Her ateşleme adımında yakılacak LED miktarı.
 
 byte soundEngineFreq = 50;      //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
 byte mainButtonFreq = 50;       //Ana buton denetleme frekansı. Yüksek değerler algılanmayan komutlarla sonuçlanır.
-byte flickerFreqLimit = 100;     //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
-float flickerBrightness = 1.1;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı.
+byte flickerFreqLimit = 1;     //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
+float flickerBrightnessLimit = 100;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı üst sınırı.
 bool bladeIsUnstable = false;    //Bıçağın dengesize yanıp sönmesini sağlar (kylo ren efekti).
+const byte kyloFlickerNum = 60;
 byte motorPower = 75;           //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
 
 
@@ -95,7 +96,7 @@ void setPins()
 
 void ledInitialize()
 {
-  FastLED.addLeds<CHIPSET, BLADE_LED_PIN>(led, NUM_LEDS);
+  FastLED.addLeds<CHIPSET, BLADE_LED_PIN, GRB>(led, NUM_LEDS);
   for (byte i; i <= NUM_LEDS; i++)
   {
     led[i] = CRGB::Black;
@@ -309,18 +310,19 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
 void flicker()  //MARK:Flicker
 {
   if (bladeIsUnstable) {unstableBlade(); return;}
-  if (saberIsOn && millis() - flickerMillis > randomFlicker)
+  if ((igniting || saberIsOn) && millis() - flickerMillis > randomFlicker)
   {
     randomFlicker =  random(0, flickerFreqLimit);
+    float randomBrightness = random(1.1, flickerBrightnessLimit);
     if (!flickered)
     {
-      FastLED.setBrightness(BRIGHTNESS  / flickerBrightness);
+      FastLED.setBrightness(BRIGHTNESS  / randomBrightness);
       FastLED.show();
       flickered = true;
     }
     else
     {
-      FastLED.setBrightness(BRIGHTNESS  * flickerBrightness);
+      FastLED.setBrightness(BRIGHTNESS  * randomBrightness);
       FastLED.show();
       flickered = false;
     }
@@ -450,32 +452,45 @@ void fadeSound(bool inOut)
 //MARK:UnstableBlade
 void unstableBlade()
 {
-  if (saberIsOn && millis() - flickerMillis > randomFlicker)
+  if ((igniting || saberIsOn) && millis() - flickerMillis > randomFlicker)
   {
+    randomFlicker =  random(0, flickerFreqLimit);
+
     if (!flickered) 
     {
-      for (byte i = 0; i < 5; i++)
+      for (byte i = 0; i < kyloFlickerNum; i++)
       {
         ledsToFlicker[i] = random(0, NUM_LEDS);
       }
     }
-    randomFlicker =  random(0, flickerFreqLimit);
+
     if (!flickered)
     {
-      for (byte i = 0; i < 5; i++)
+      for (byte i = 0; i < kyloFlickerNum; i++)
       {
-        led[ledsToFlicker[i]] = 
-        CRGB(blade_R / flickerBrightness, blade_G / flickerBrightness, blade_B / flickerBrightness);
+        if (led[ledsToFlicker[i]] != CRGB(0, 0, 0))
+        {
+          byte randomBrightness = random(1.1, flickerBrightnessLimit);
+          led[ledsToFlicker[i]] = 
+          CRGB(blade_R / randomBrightness, blade_G / randomBrightness, blade_B / randomBrightness);
+        }
       }
       FastLED.show();
+      #if DEBUG
+      //Serial.println(F("kylo'd"));
+      #endif
       flickered = true;
     }
     else
     {
-      for (byte i = 0; i < 5; i++)
+      for (byte i = 0; i < kyloFlickerNum; i++)
       {
-        led[ledsToFlicker[i]] = 
-        CRGB(blade_R * flickerBrightness, blade_G * flickerBrightness, blade_B * flickerBrightness);
+        if (led[ledsToFlicker[i]] != CRGB(0, 0, 0))
+        {
+          byte randomBrightness = random(1.1, flickerBrightnessLimit);
+          led[ledsToFlicker[i]] = 
+          CRGB(blade_R * randomBrightness, blade_G * randomBrightness, blade_B * randomBrightness);
+        }
       }
       FastLED.show();
       flickered = false;
