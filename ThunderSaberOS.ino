@@ -25,7 +25,7 @@ Son revizyon: 2024
 /*---------- Pre-Proccessor Değerler ----------*/
 
 #define DEBUG true                  //Seri monitör vs. için debug ayarı. Açık olması Arduinoyu bir miktar yavaşlatır.
-#define DEBUG_SOUND false
+#define DEBUG_SOUND true
 
 #define NUM_LEDS 120                //Bıçaktaki LED sayısı.
 #define CHIPSET WS2812B             //LED şerit tipi.
@@ -36,24 +36,21 @@ Son revizyon: 2024
 #define MAIN_BUTTON_PIN 4           //Açma/Kapama butonu pini.
 #define BUSY_PIN 3                  //DFplayer'ın meşgullük bildiren pini, Çalıyor = 0, Boşta = 1
 
-#define SWING_START_TRESHOLD 1      //Sallama rutinini başlatmak için gereken hareket miktarının hassasiyeti.
-#define SWING_STOP_TRESHOLD 1       //Sallama rutinini durdurmak için gereken hareketsizlik miktarının hassasiyeti.
-
 
 /*---------- İç Değişkenler ----------*/       //Elle DEĞİŞTİRİLMEMESİ gereken değişkenler.
 
-byte stationary, moving, movementValue;
+byte movementValue;
 byte internalVolume, prevInternalVolume;   
-byte errorCounter = 0;
-byte buttonClickCounter = 0;
+byte errorCounter = 0, buttonClickCounter = 0;
 byte randomBrightness;
 byte unstableLedsToFlicker[60];
 sensors_event_t accel, gyro, temp;
-unsigned long ignitionMillis, flickerMillis, soundEngineMillis, mainButtonMillis, fadeSoundMillis;
-int ignitionFadeTime;
+unsigned long ignitionMillis, flickerMillis, soundEngineMillis, soundFadeMillis;
+unsigned int ignitionSoundFadeTimer, mainButtonCooldownTimer;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
-bool saberIsOn = false, mainButtonState = false, igniting = false, flickered = false;
+bool saberIsOn = false, mainButtonState = false, igniting = false, flickered = false, soundFadeNeeded = false;
+bool moving = false, mainButtonInteractable = true;
 
 
 /*---------- Objeler ----------*/
@@ -80,17 +77,22 @@ byte brightness =
 65025 / (blade_R + blade_G + blade_B);  //Otomatik parlaklık, 1.5 Amperi aşmayacak şekilde en yüksek parlaklığı ayarlar.
 
 byte flickerFreqLimit = 100;     //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
-byte flickerBrightnessPercent = 75;     //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
+byte flickerBrightness = 75;     //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
+
 byte ignitionSpeed = 5;        //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
 byte ledPerStep = 2;            //Her ateşleme adımında yakılacak LED miktarı.
+
 
 //SES
 byte idleVolume = 15;          //Ses seviyesi, yükseltmek sallama efektini güçsüzleştirir. Önerilen Max: 20
 byte soundEngineFreq = 50;      //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
+int ignitionSoundFadeLenght = 2000;     //Ateşleme sesinin ateşleme bittikten sonra varsayılana dönmesi için verilen süre.
+
 
 //DİĞER
-byte mainButtonFreq = 50;       //Ana buton denetleme frekansı. Yüksek değerler algılanmayan komutlarla sonuçlanır.
-byte motorPower = 75;           //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
+int mainButtonCooldownLenght = 900;  //Ana butona basıldıktan sonra yeniden basıldığında algılanması için gereken süre.
+byte idleMotorPower = 75;             //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
+byte maxMotorPower = 255;             //Motorun çıkabileceği maksimum güç, Max: 255
 
 
 /*---------- Başlangıç Fonksiyonları ----------*/
@@ -126,12 +128,12 @@ void DFPlayerInitialize()
     Serial.println(F("DFplayer hata"));
     #endif
   }
-  delay(500);        //DFplayerMini yavaş bir komponenttir, komutlar arası zamana ihtiyaç duyar.  
+  delay(1000);        //DFplayerMini yavaş bir komponenttir, komutlar arası zamana ihtiyaç duyar.
   df.reset();
-  delay(200);         //peşpeşe gönderilen komutlar ya algılanmayacak yada komple senkronu bozacaktır.
+  delay(100); 
   df.stop();          
-  delay(200);
-  df.volume(30);
+  delay(100);
+  df.volume(idleVolume);
   internalVolume = idleVolume;
   prevInternalVolume = internalVolume;
 }
@@ -177,7 +179,11 @@ void finalizeSetup()
 {
   digitalWrite(STATUS_LED, 1);
   df.play(SFX_BOOT_SUCCESS);
-  delay(600);
+  haltUntilEndOfTrack();
+  df.loop(SFX_STANDBY);
+  delay(50);
+  internalVolume = 30;
+  df.volume(internalVolume);
   digitalWrite(STATUS_LED, 0);
   #if DEBUG
   Serial.println(F(">Baslatma basarili<"));
@@ -206,53 +212,50 @@ void loop() //MARK:loop
   mainButtonCheck();
   soundEngine();
   flicker();
+  fadeSound(saberIsOn);
 }
 
 
 void mainButtonCheck()  //MARK:MainButtonCheck
 {
-  if (igniting) {switchBlade(saberIsOn);  fadeSound(!saberIsOn);}
-  if (millis() - mainButtonMillis < mainButtonFreq) {return;}
-  if (digitalRead(MAIN_BUTTON_PIN) == 1) {mainButtonState = true; buttonClickCounter++;}
-  if (!mainButtonState) {return;}
-  if (digitalRead(MAIN_BUTTON_PIN) == 0) {mainButtonState = false;}
-  if (!saberIsOn && !igniting)
+  if (igniting) {switchBlade(saberIsOn); return;}
+  if (millis() - mainButtonCooldownTimer < mainButtonCooldownLenght) {return;}
+  if (digitalRead(MAIN_BUTTON_PIN) == 0) {mainButtonState = false; return;}
+  if (mainButtonState) {return;}
+  if (digitalRead(MAIN_BUTTON_PIN) == 1 && !mainButtonState) {mainButtonState = true;}
+  
+  if (!saberIsOn)
   {
     saberIsOn = true;
     setBladeColor(blade_R, blade_G, blade_B);
-    df.play(SFX_IGNITE_AND_HUM);  
-    //Normalde Setup dışında delay kullanmak, multitasking yapılan bir kodda,  
-    //mantıklı değil ancak burada zaten bütün donanımın DFplayer'ın çalmasını beklemesi gerekli.
-    delay(100);
+    df.play(SFX_IGNITE_AND_HUM);
+    delay(60);  
+    soundFadeMillis = millis();
     internalVolume = 30;
-    df.volume(internalVolume);
-
-
-    analogWrite(MOTOR_PIN, 120); //Motor başlat, başlatma hızı min: 120
+    ignitionSoundFadeTimer = millis();
+    soundFadeNeeded = true;
 
     #if DEBUG
     digitalWrite(STATUS_LED, 1);
     Serial.println(F("igniting"));
     #endif
   }
-  else if (!igniting)
+  else
   {
     saberIsOn = false;
     setBladeColor(CRGB::Black);
-    delay(50);
     df.play(SFX_RETRACT);
-    delay(50);
+    soundFadeMillis = millis();
     internalVolume = idleVolume;
-    df.volume(internalVolume);
-    analogWrite(MOTOR_PIN, 120);
+    soundFadeNeeded = true;
 
     #if DEBUG
     digitalWrite(STATUS_LED, 0);
     Serial.println(F("retracting"));
     #endif
   }
+
   igniting = true;
-  mainButtonMillis = millis();
 }
 
 
@@ -288,10 +291,11 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
 
   ignitionMillis = millis();
   
-  if (currentLed1 >= 61)   //ateşleme/geri çekme tamamlandı.
+  if (currentLed1 >= 61)   //ateşleme tamamlandı.
   {
     igniting = false;
-    analogWrite(MOTOR_PIN, motorPower); //motor idle
+    mainButtonCooldownTimer = millis();
+    analogWrite(MOTOR_PIN, idleMotorPower); //motor idle
     currentLed1 = 60;
     currentLed2 = 60;
 
@@ -301,9 +305,8 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
 
     return;
   }
-  else if (currentLed1 <= -1)
+  else if (currentLed1 <= -1) //geri çekme tamamlandı.
   {
-    igniting = false;
     analogWrite(MOTOR_PIN, 0); //motor durdur
     currentLed1 = 0;
     currentLed2 = NUM_LEDS;
@@ -311,6 +314,11 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
     #if DEBUG
     Serial.println(F("retracted"));
     #endif
+
+    haltUntilEndOfTrack();
+    df.loop(SFX_STANDBY);
+    mainButtonCooldownTimer = millis();
+    igniting = false;
 
     return;
   }
@@ -331,7 +339,7 @@ void flicker()  //MARK:Flicker
     }
     else
     {
-      FastLED.setBrightness(brightness * flickerBrightnessPercent / 100);
+      FastLED.setBrightness(brightness * flickerBrightness / 100);
       FastLED.show();
       flickered = false;
     }
@@ -343,69 +351,74 @@ void flicker()  //MARK:Flicker
 
 void soundEngine()  //MARK:SoundEngine
 {
-if (igniting || !saberIsOn) {return;}
-if (millis() - soundEngineMillis < soundEngineFreq) {return;}
-mpu.getEvent(&accel, &gyro, &temp);
-byte sumAccel = abs(accel.acceleration.x) + abs(accel.acceleration.y) + abs(accel.acceleration.z);
-byte sumGyro = abs(gyro.gyro.x) + abs(gyro.gyro.y) + abs(gyro.gyro.z);
-movementValue = sumAccel + sumGyro;
+  if (igniting || !saberIsOn || soundFadeNeeded) {return;}
+  if (millis() - soundEngineMillis < soundEngineFreq) {return;}
+  mpu.getEvent(&accel, &gyro, &temp);
+  byte sumAccel = abs(accel.acceleration.x) + abs(accel.acceleration.y) + abs(accel.acceleration.z);
+  byte sumGyro = abs(gyro.gyro.x) + abs(gyro.gyro.y) + abs(gyro.gyro.z);
+  movementValue = sumAccel + sumGyro;
 
-if (sumAccel > 16 || sumGyro > 0.4)
-{
-  if (stationary <= SWING_STOP_TRESHOLD) {stationary++;}
-  if (stationary < SWING_STOP_TRESHOLD) {return;}
-  moving = 0;
-
-  internalVolume = map(movementValue, 10, 50, idleVolume, 30);
-  if (internalVolume > 30) {internalVolume = 30;} //failsafe
-
-  if (internalVolume == idleVolume || internalVolume != prevInternalVolume)
+  if (sumAccel > 16 || sumGyro > 0.4)
   {
-    prevInternalVolume = internalVolume;  //dinamik işitsel geri bildirim (sallama sesi).
-    df.volume(internalVolume);
-    analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, motorPower, 200));  //dinamik haptik geri bildirim (titreşim).
+    internalVolume = map(movementValue, 10, 45, idleVolume, 30);
+    if (internalVolume > 30) {internalVolume = 30;} //failsafe
 
-    #if DEBUG
-    Serial.print("moving,  Volume: ");
-    Serial.print(internalVolume);
-    Serial.print(" / movement value: ");
-    Serial.println(movementValue);
-    #endif
+    if (internalVolume == idleVolume || internalVolume != prevInternalVolume)
+    {
+      moving = true;
+      prevInternalVolume = internalVolume;  //dinamik işitsel geri bildirim (sallama sesi).
+      df.volume(internalVolume);
+      analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, idleMotorPower, maxMotorPower));  //dinamik haptik geri bildirim (titreşim).
+
+      #if DEBUG_SOUND
+      Serial.print("moving,  Volume: ");
+      Serial.print(internalVolume);
+      Serial.print(" / movement value: ");
+      Serial.println(movementValue);
+      #endif
+    }
   }
-}
-else
-{
-  if (moving <= SWING_START_TRESHOLD) {moving++;}
-  if (moving < SWING_START_TRESHOLD) {return;}
-  stationary = 0;
-  if (internalVolume != idleVolume)   //ses seviyesini DFplayer'dan okursak komut göndermiş oluruz, bu yüzden
-  {                               //hemen arkasından ses seviyesini ayarlamak için yolladığımız komut algılanmayacaktır.
-                                  //Çözümü ise ses seviyesi için ayrı bir değişken kullanmaktır.
-    internalVolume = idleVolume;
-    df.volume(internalVolume);           //sesi eski seviyesine geri getir.
-    analogWrite(MOTOR_PIN, motorPower);  //titreşim motorunu eski seviyesine geri getir.
+  else if (moving)
+  {
+    if (internalVolume != idleVolume)   //ses seviyesini DFplayer'dan okursak komut göndermiş oluruz, bu yüzden
+    {                               //hemen arkasından ses seviyesini ayarlamak için yolladığımız komut algılanmayacaktır.
+                                    //Çözümü ise ses seviyesi için ayrı bir değişken kullanmaktır.
+      moving = false;
+      internalVolume = idleVolume;
+      df.volume(internalVolume);           //sesi eski seviyesine geri getir.
+      analogWrite(MOTOR_PIN, idleMotorPower);  //titreşim motorunu eski seviyesine geri getir.
 
-    #if DEBUG
-    Serial.println("stoppped");
-    #endif
+      #if DEBUG_SOUND
+      Serial.println("stoppped");
+      #endif
+     }
   }
+
+  soundEngineMillis = millis();
 }
 
-soundEngineMillis = millis();
-}
-
+//MARK:HALT
 void haltUntilEndOfTrack()
 {
-  while (BUSY_PIN)
+  #if DEBUG
+  Serial.println(F("Bekleniyor..."));
+  #endif
+  while (digitalRead(BUSY_PIN))
   {
     delay(1);
     //Sesin başlamasını bekle.
   }
-  while (!BUSY_PIN)
+  #if DEBUG
+  Serial.println(F("Ses basladi, bitmesi bekleniyor..."));
+  #endif
+  while (!digitalRead(BUSY_PIN))
   {
     delay(1);
     //DUR YOLCU!
   }
+  #if DEBUG
+  Serial.println(F("Devam ediliyor..."));
+  #endif
 }
 
 //MARK:SetBladeColor
@@ -414,7 +427,6 @@ void setBladeColor(byte R, byte G, byte B)
   if (bladeColor == CRGB(R, G, B)) {return;}
   bladeColor = CRGB(R, G, B);
 }
-
 void setBladeColor(CRGB colorpreset)
 {
   if (bladeColor == colorpreset) {return;}
@@ -426,34 +438,36 @@ void setBladeColor(CRGB colorpreset)
 //false = out, true = in
 void fadeSound(bool inOut)
 {
-
-  if (internalVolume < idleVolume || internalVolume > 30)
+  if (!soundFadeNeeded || internalVolume < idleVolume || internalVolume > 30)
   {
+    soundFadeNeeded = false;
     return;
   }
 
-  if (inOut)
+  analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, idleMotorPower, maxMotorPower));
+
+  if (!inOut)
   {
-    if (millis() - fadeSoundMillis > 50)
+    if (millis() - soundFadeMillis > 50)
     {
-      internalVolume = map(currentLed1, -1, 61, 30, idleVolume);
+      internalVolume = map(currentLed1, -1, 61, 31, idleVolume);
       df.volume(internalVolume);
       #if DEBUG_SOUND
       Serial.println(internalVolume);
       #endif
-      fadeSoundMillis = millis();
+      soundFadeMillis = millis();
     }
   }
   else
   {
-    if (millis() - fadeSoundMillis > 50)
+    if (currentLed1 > 59 && (millis() - soundFadeMillis > 50))
     {
-      internalVolume = map(currentLed1, -1, 61, 30, idleVolume);
+      internalVolume -= 2;
       df.volume(internalVolume);
       #if DEBUG_SOUND
       Serial.println(internalVolume);
       #endif
-      fadeSoundMillis = millis();
+      soundFadeMillis = millis();
     }
   }
 }
