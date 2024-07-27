@@ -39,18 +39,23 @@ Son revizyon: 2024
 
 /*---------- İç Değişkenler ----------*/       //Elle DEĞİŞTİRİLMEMESİ gereken değişkenler.
 
+CRGB colorPresets[6] = {CRGB::Blue, CRGB::Green, CRGB::Purple, CRGB::Yellow, CRGB::White, CRGB::Red};
+CRGB currentBladeColor;
+byte currentColorPreset = 0;
 byte movementValue;
 byte internalVolume, prevInternalVolume;   
-byte errorCounter = 0, buttonClickCounter = 0;
+byte errorCounter = 0, buttonClickCount = 0;
+byte brightness;
 byte randomBrightness;
-byte unstableLedsToFlicker[60];
+byte unstableLedToFlicker;
 sensors_event_t accel, gyro, temp;
+byte sumAccel, sumGyro;
 unsigned long ignitionMillis, flickerMillis, soundEngineMillis, soundFadeMillis;
-unsigned int ignitionSoundFadeTimer, mainButtonCooldownTimer;
+unsigned long ignitionSoundFadeTimer, bladeSwitchCooldownTimer, mainButtonFunctionTimer;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
-bool saberIsOn = false, mainButtonState = false, igniting = false, flickered = false, soundFadeNeeded = false;
-bool moving = false, mainButtonInteractable = true;
+bool saberIsOn = false, mainButtonState = false, switchingBlade = false, flickered = false;
+bool soundFading = false, moving = false, colorChangeOverride = false;
 
 
 /*---------- Objeler ----------*/
@@ -64,35 +69,36 @@ Adafruit_MPU6050 mpu;
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
 //IŞIK
-bool bladeIsUnstable = false;    //Bıçağın dengesize yanıp sönmesini sağlar (kylo ren efekti).
-byte unstableLedCount = 60;
-byte unstableFlickerFreqLimit = 1;     //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
+bool bladeIsUnstable = false;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
+byte unstableLedCount = 60;                 //Aynı anda yakıp söndürülecek led sayısı.
+byte unstableFlickerFreqLimit = 1;          //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 byte unstableFlickerBrightnessLimit = 255;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı üst sınırı.
 
-byte blade_R = 0;
-byte blade_G = 0;           //Bıçak Rengi.
-byte blade_B = 255;
-CRGB bladeColor(blade_R, blade_G, blade_B);
-byte brightness =
-65025 / (blade_R + blade_G + blade_B);  //Otomatik parlaklık, 1.5 Amperi aşmayacak şekilde en yüksek parlaklığı ayarlar.
+CRGB bladeColor(colorPresets[currentColorPreset]); //Bıçak rengi.
+byte brightness = 65025 / (currentBladeColor.r + currentBladeColor.g + currentBladeColor.b);
 
-byte flickerFreqLimit = 100;     //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
-byte flickerBrightness = 75;     //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
+byte flickerFreqLimit = 100;           //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
+byte flickerBrightness = 75;           //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
 
-byte ignitionSpeed = 5;        //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
-byte ledPerStep = 2;            //Her ateşleme adımında yakılacak LED miktarı.
+byte ignitionSpeed = 5;                //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
+byte ledPerStep = 2;                   //Her ateşleme adımında yakılacak LED miktarı.
 
 
 //SES
-byte idleVolume = 15;          //Ses seviyesi, yükseltmek sallama efektini güçsüzleştirir. Önerilen Max: 20
-byte soundEngineFreq = 50;      //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
-int ignitionSoundFadeLenght = 2000;     //Ateşleme sesinin ateşleme bittikten sonra varsayılana dönmesi için verilen süre.
+byte idleVolume = 15;                  //Ses seviyesi, yükseltmek sallama efektini güçsüzleştirir. Önerilen Max: 20
+byte soundEngineFreq = 50;             //Ses motoru denetleme frekansı, azaldıkça hassaslık artar, tutarlılık azalır. Min: 50
+int ignitionSoundFadeLenght = 200;     //Ateşleme sesinin ateşleme bittikten sonra varsayılana dönmesi için verilen süre (ms).
 
 
-//DİĞER
-int mainButtonCooldownLenght = 900;  //Ana butona basıldıktan sonra yeniden basıldığında algılanması için gereken süre.
-byte idleMotorPower = 75;             //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
-byte maxMotorPower = 255;             //Motorun çıkabileceği maksimum güç, Max: 255
+//TİTREŞİM
+byte idleMotorPower = 75;              //Hareketsiz durumdayken titreşim motoru gücü, Min: 75, Max: 150
+byte maxMotorPower = 255;              //Motorun çıkabileceği maksimum güç, Max: 255
+
+
+//BUTON
+int bladeSwitchCooldownLenght = 1500;  //Ateşleme tetiklendikten sonra yeniden tetiklenebilmesi için geçmesi gereken gereken süre (ms).
+int mainButtonFunctionLenght = 300;    //Ana butona basıldıktan sonra başka fonksiyonları tetiklemek için arka arkaya basmalar arasındaki max süre (ms).
+
 
 
 /*---------- Başlangıç Fonksiyonları ----------*/
@@ -114,6 +120,7 @@ void ledInitialize()
     led[i] = CRGB::Black;
   }          
   FastLED.show();          
+  brightness = 65025 / (currentBladeColor.r + currentBladeColor.g + currentBladeColor.b);
   FastLED.setBrightness(brightness);
   randomSeed(analogRead(0));
 }
@@ -193,11 +200,8 @@ void finalizeSetup()
 
 void setup() //MARK:setup
 {
-  #if DEBUG                 //Debug modu aktifse;
-  Serial.begin(9600);       //seri monitörü başlat.
-  #endif
-
   //Başlangıç rutini:
+  Serial.begin(9600);
   setPins();
   DFPlayerInitialize();
   MPUInitialize();
@@ -209,31 +213,70 @@ void setup() //MARK:setup
 
 void loop() //MARK:loop
 {
-  mainButtonCheck();
-  soundEngine();
+  //Döngü rutini:
+  checkMainButton();
+  switchBlade();
   flicker();
-  fadeSound(saberIsOn);
+  fadeSound();
+  soundEngine();
 }
 
 
-void mainButtonCheck()  //MARK:MainButtonCheck
+//MARK:CheckMainButton
+void checkMainButton()
 {
-  if (igniting) {switchBlade(saberIsOn); return;}
-  if (millis() - mainButtonCooldownTimer < mainButtonCooldownLenght) {return;}
-  if (digitalRead(MAIN_BUTTON_PIN) == 0) {mainButtonState = false; return;}
-  if (mainButtonState) {return;}
-  if (digitalRead(MAIN_BUTTON_PIN) == 1 && !mainButtonState) {mainButtonState = true;}
+  if ((millis() - mainButtonFunctionTimer > mainButtonFunctionLenght) && buttonClickCount != 0)
+  {
+    switch (buttonClickCount)
+    {
+      case 1:
+        startSwitchingBlade();
+        break;
+
+      case 2:
+        //Renk değiştir.
+        break;
+
+      case 3:
+        //Ön ayar değiştir.
+        break;
+
+      default:
+        break;
   
-  if (!saberIsOn)
+    }
+
+    buttonClickCount = 0;
+  }
+
+  if (!digitalRead(MAIN_BUTTON_PIN)) {mainButtonState = false; return;}
+  if (mainButtonState) {return;}
+  if (digitalRead(MAIN_BUTTON_PIN) && !mainButtonState) {mainButtonState = true;}
+
+  buttonClickCount++;
+  mainButtonFunctionTimer = millis();
+}
+
+
+
+/*----------- Işık Fonsksiyonları -----------*/
+
+
+//MARK:StartSwitchingBlade
+void startSwitchingBlade()
+{
+  if (millis() - bladeSwitchCooldownTimer < bladeSwitchCooldownLenght) {return;}
+  
+  if (!saberIsOn || colorChangeOverride)
   {
     saberIsOn = true;
-    setBladeColor(blade_R, blade_G, blade_B);
+    colorChangeOverride = false;
+    setBladeColor(bladeColor);
     df.play(SFX_IGNITE_AND_HUM);
     delay(60);  
-    soundFadeMillis = millis();
     internalVolume = 30;
-    ignitionSoundFadeTimer = millis();
-    soundFadeNeeded = true;
+    analogWrite(MOTOR_PIN, maxMotorPower);
+    soundFadeMillis = millis();
 
     #if DEBUG
     digitalWrite(STATUS_LED, 1);
@@ -245,9 +288,10 @@ void mainButtonCheck()  //MARK:MainButtonCheck
     saberIsOn = false;
     setBladeColor(CRGB::Black);
     df.play(SFX_RETRACT);
-    soundFadeMillis = millis();
     internalVolume = idleVolume;
-    soundFadeNeeded = true;
+    analogWrite(MOTOR_PIN, maxMotorPower);
+    soundFadeMillis = millis();
+    soundFading = true;
 
     #if DEBUG
     digitalWrite(STATUS_LED, 0);
@@ -255,17 +299,16 @@ void mainButtonCheck()  //MARK:MainButtonCheck
     #endif
   }
 
-  igniting = true;
+  switchingBlade = true;
 }
-
-
-void switchBlade(bool operation)  //MARK:SwitchBlade
+void switchBlade()  //MARK:SwitchBlade
 {
-  if (millis() - ignitionMillis < ignitionSpeed){return;}
+  if (!switchingBlade || millis() - ignitionMillis < ignitionSpeed) {return;}
+
   for (int i = 0; i<ledPerStep; i++)   //Igniting
   {
-    led[currentLed1] = bladeColor;
-    led[currentLed2] = bladeColor;
+    led[currentLed1] = currentBladeColor;
+    led[currentLed2] = currentBladeColor;
     if (saberIsOn && currentLed1 < 58)
     {
       led[currentLed1+1] = CRGB::White;
@@ -275,7 +318,8 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
       led[currentLed1+3] = CRGB::White;
       led[currentLed2-3] = CRGB::White;
     }
-    if (operation)
+
+    if (saberIsOn)
     {
       currentLed2--;
       currentLed1++;
@@ -293,8 +337,10 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
   
   if (currentLed1 >= 61)   //ateşleme tamamlandı.
   {
-    igniting = false;
-    mainButtonCooldownTimer = millis();
+    switchingBlade = false;
+    bladeSwitchCooldownTimer = millis();
+    ignitionSoundFadeTimer = millis();
+    soundFading = true;
     analogWrite(MOTOR_PIN, idleMotorPower); //motor idle
     currentLed1 = 60;
     currentLed2 = 60;
@@ -317,8 +363,8 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
 
     haltUntilEndOfTrack();
     df.loop(SFX_STANDBY);
-    mainButtonCooldownTimer = millis();
-    igniting = false;
+    bladeSwitchCooldownTimer = millis();
+    switchingBlade = false;
 
     return;
   }
@@ -328,34 +374,116 @@ void switchBlade(bool operation)  //MARK:SwitchBlade
 void flicker()  //MARK:Flicker
 {
   if (bladeIsUnstable) {unstableBladeFlicker(); return;}
-  if ((igniting || saberIsOn) && millis() - flickerMillis > randomFlicker)
+
+  if ((switchingBlade || saberIsOn) && (millis() - flickerMillis > randomFlicker))
   {
     randomFlicker =  random(0, flickerFreqLimit);
     if (!flickered)
     {
       FastLED.setBrightness(brightness);
-      FastLED.show();
       flickered = true;
     }
     else
     {
       FastLED.setBrightness(brightness * flickerBrightness / 100);
-      FastLED.show();
       flickered = false;
     }
 
+    FastLED.show();
     flickerMillis = millis();
   }
 }
 
 
+//MARK:UnstableBladeFlicker
+void unstableBladeFlicker()
+{
+  if ((switchingBlade || saberIsOn) && (millis() - flickerMillis > randomFlicker))
+  {
+    randomFlicker =  random(0, unstableFlickerFreqLimit);
+
+    if (!flickered)
+    {
+      for (byte i = 0; i <= unstableLedCount; i++)
+      {
+        unstableLedToFlicker = random(0, NUM_LEDS);
+        if (led[unstableLedToFlicker] != CRGB::Black)
+        {
+          randomBrightness = random(1.3, unstableFlickerBrightnessLimit);
+          led[unstableLedToFlicker] = 
+          CRGB((currentBladeColor.r / randomBrightness), (currentBladeColor.g / randomBrightness), (currentBladeColor.b / randomBrightness));
+        }
+      }
+      flickered = true;
+    }
+    else
+    {
+      for (byte i = 0; i <= NUM_LEDS; i++)
+      {
+        if (led[i] != CRGB::Black)
+        {
+          led[i] = currentBladeColor;
+        }
+      }
+      flickered = false;
+    }
+
+    FastLED.show();
+    flickerMillis = millis();
+  }
+}
+
+
+//MARK:SetBladeColor
+void setBladeColor(byte R, byte G, byte B)
+{
+  if (currentBladeColor == CRGB(R, G, B)) {return;}
+  currentBladeColor = CRGB(R, G, B);
+}
+void setBladeColor(CRGB colorpreset)
+{
+  if (currentBladeColor == colorpreset) {return;}
+  currentBladeColor = colorpreset;
+}
+
+
+//MARK:ChangeBladeColor
+void changeBladeColor()
+{
+  currentColorPreset++;
+
+  if (currentColorPreset == 7) 
+  {
+    bladeIsUnstable = true;
+    bladeColor = CRGB::Red;
+  }
+  else 
+  {
+    bladeIsUnstable = false;
+    bladeColor = colorPresets[currentColorPreset];
+  }
+
+  if (currentColorPreset > 7) {currentColorPreset = 0;}
+  
+  if (saberIsOn)
+  {
+    colorChangeOverride = true;
+    startSwitchingBlade();
+  }
+}
+
+
+
+/*----------- Ses Fonsksiyonları -----------*/
+
+
 void soundEngine()  //MARK:SoundEngine
 {
-  if (igniting || !saberIsOn || soundFadeNeeded) {return;}
+  if (switchingBlade || !saberIsOn || soundFading) {return;}
   if (millis() - soundEngineMillis < soundEngineFreq) {return;}
   mpu.getEvent(&accel, &gyro, &temp);
-  byte sumAccel = abs(accel.acceleration.x) + abs(accel.acceleration.y) + abs(accel.acceleration.z);
-  byte sumGyro = abs(gyro.gyro.x) + abs(gyro.gyro.y) + abs(gyro.gyro.z);
+  sumAccel = abs(accel.acceleration.x) + abs(accel.acceleration.y) + abs(accel.acceleration.z);
+  sumGyro = abs(gyro.gyro.x) + abs(gyro.gyro.y) + abs(gyro.gyro.z);
   movementValue = sumAccel + sumGyro;
 
   if (sumAccel > 16 || sumGyro > 0.4)
@@ -366,7 +494,7 @@ void soundEngine()  //MARK:SoundEngine
     if (internalVolume == idleVolume || internalVolume != prevInternalVolume)
     {
       moving = true;
-      prevInternalVolume = internalVolume;  //dinamik işitsel geri bildirim (sallama sesi).
+      prevInternalVolume = internalVolume;
       df.volume(internalVolume);
       analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, idleMotorPower, maxMotorPower));  //dinamik haptik geri bildirim (titreşim).
 
@@ -380,142 +508,85 @@ void soundEngine()  //MARK:SoundEngine
   }
   else if (moving)
   {
-    if (internalVolume != idleVolume)   //ses seviyesini DFplayer'dan okursak komut göndermiş oluruz, bu yüzden
-    {                               //hemen arkasından ses seviyesini ayarlamak için yolladığımız komut algılanmayacaktır.
-                                    //Çözümü ise ses seviyesi için ayrı bir değişken kullanmaktır.
-      moving = false;
-      internalVolume = idleVolume;
-      df.volume(internalVolume);           //sesi eski seviyesine geri getir.
-      analogWrite(MOTOR_PIN, idleMotorPower);  //titreşim motorunu eski seviyesine geri getir.
+    moving = false;
+    internalVolume = idleVolume;
+    df.volume(internalVolume);                    //sesi eski seviyesine geri getir.
+    analogWrite(MOTOR_PIN, idleMotorPower);       //titreşim motorunu eski seviyesine geri getir.
 
-      #if DEBUG_SOUND
-      Serial.println("stoppped");
-      #endif
-     }
+    #if DEBUG_SOUND
+    Serial.println("stopped");
+    #endif
+     
+    /*ses seviyesini DFplayer'dan okursak komut göndermiş oluruz, bu yüzden
+    hemen arkasından ses seviyesini ayarlamak için yolladığımız komut algılanmayacaktır.
+    Çözümü ise ses seviyesi için ayrı bir değişken kullanmaktır.*/
   }
 
   soundEngineMillis = millis();
 }
 
-//MARK:HALT
+//MARK:HaltUntilEndOfTrack
 void haltUntilEndOfTrack()
 {
   #if DEBUG
-  Serial.println(F("Bekleniyor..."));
+  Serial.println(F("Sesin baslamasi icin bekleniyor..."));
   #endif
+  
   while (digitalRead(BUSY_PIN))
   {
-    delay(1);
-    //Sesin başlamasını bekle.
+    delay(1);     //Sesin başlamasını bekle.
   }
+
   #if DEBUG
   Serial.println(F("Ses basladi, bitmesi bekleniyor..."));
   #endif
+
   while (!digitalRead(BUSY_PIN))
   {
-    delay(1);
-    //DUR YOLCU!
+    delay(1);     //DUR YOLCU!
   }
+
   #if DEBUG
   Serial.println(F("Devam ediliyor..."));
   #endif
 }
 
-//MARK:SetBladeColor
-void setBladeColor(byte R, byte G, byte B)
-{
-  if (bladeColor == CRGB(R, G, B)) {return;}
-  bladeColor = CRGB(R, G, B);
-}
-void setBladeColor(CRGB colorpreset)
-{
-  if (bladeColor == colorpreset) {return;}
-  bladeColor = colorpreset;
-}
 
 
 //MARK:FadeSound
 //false = out, true = in
-void fadeSound(bool inOut)
+void fadeSound()
 {
-  if (!soundFadeNeeded || internalVolume < idleVolume || internalVolume > 30)
+  if (!soundFading || internalVolume < idleVolume || internalVolume > 30)
   {
-    soundFadeNeeded = false;
+    soundFading = false;
     return;
   }
 
+
+  if (!saberIsOn && (millis() - soundFadeMillis > 50))
+  {
+    internalVolume = map(currentLed1, -1, 61, 31, idleVolume);
+    df.volume(internalVolume);
+    #if DEBUG_SOUND
+    Serial.println(internalVolume);
+    #endif
+    soundFadeMillis = millis();
+  }
+
+  else if ((millis() - ignitionSoundFadeTimer > ignitionSoundFadeLenght) &&
+   currentLed1 > 59 && (millis() - soundFadeMillis > 50))
+  {
+    internalVolume -= 2;
+    df.volume(internalVolume);
+    soundFadeMillis = millis();
+
+    #if DEBUG_SOUND
+    Serial.println(internalVolume);
+    #endif
+  }
+
   analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, idleMotorPower, maxMotorPower));
-
-  if (!inOut)
-  {
-    if (millis() - soundFadeMillis > 50)
-    {
-      internalVolume = map(currentLed1, -1, 61, 31, idleVolume);
-      df.volume(internalVolume);
-      #if DEBUG_SOUND
-      Serial.println(internalVolume);
-      #endif
-      soundFadeMillis = millis();
-    }
-  }
-  else
-  {
-    if (currentLed1 > 59 && (millis() - soundFadeMillis > 50))
-    {
-      internalVolume -= 2;
-      df.volume(internalVolume);
-      #if DEBUG_SOUND
-      Serial.println(internalVolume);
-      #endif
-      soundFadeMillis = millis();
-    }
-  }
 }
 
-//MARK:UnstableBlade
-void unstableBladeFlicker()
-{
-  if ((igniting || saberIsOn) && millis() - flickerMillis > randomFlicker)
-  {
-    randomFlicker =  random(0, unstableFlickerFreqLimit);
-
-    if (!flickered)
-    {
-      for (byte i = 0; i < unstableLedCount; i++)
-      {
-        unstableLedsToFlicker[i] = random(0, NUM_LEDS);
-      }
-      randomBrightness = random(1.1, unstableFlickerBrightnessLimit);
-    }
-
-    if (!flickered)
-    {
-      for (byte i = 0; i < unstableLedCount; i++)
-      {
-        if (led[unstableLedsToFlicker[i]] != CRGB(0, 0, 0))
-        {
-          led[unstableLedsToFlicker[i]] = 
-          CRGB(blade_R / randomBrightness, blade_G / randomBrightness, blade_B / randomBrightness);
-        }
-      }
-      FastLED.show();
-      flickered = true;
-    }
-    else
-    {
-      for (byte i = 0; i < unstableLedCount; i++)
-      {
-        if (led[unstableLedsToFlicker[i]] != CRGB(0, 0, 0))
-        {
-          led[unstableLedsToFlicker[i]] = 
-          CRGB(blade_R * randomBrightness, blade_G * randomBrightness, blade_B * randomBrightness);
-        }
-      }
-      FastLED.show();
-      flickered = false;
-    }
-
-    flickerMillis = millis();
-  }
-}
 
