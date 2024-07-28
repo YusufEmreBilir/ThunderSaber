@@ -6,42 +6,26 @@
 //Klasörler
 
 // FOLDER_SYSTEM_SOUNDS    
-    #define SFX_BOOT_SUCCESS        7   //1
-    #define SFX_BOOT_FAIL           1   //2
-    #define SFX_BOOT_FAIL_FUNNY     2   //3
-    #define SFX_STANDBY             6   //7
+    #define SFX_BOOT_SUCCESS        1   //1
+    #define SFX_BOOT_FAIL           2   //2
+    #define SFX_BOOT_FAIL_FUNNY     3   //3
+    #define SFX_STANDBY             4   //4
 
 
-// FOLDER_DEFAULT_SFX      
-    #define SFX_IGNITE_AND_HUM      3   //4
-    #define SFX_RETRACT             4   //5
-    #define SFX_HUM                 5   //6
+// FOLDER_SABER_SFX
+    #define SFX_IGNITE_AND_HUM      5   //5
+    #define SFX_RETRACT             6   //6
+    #define SFX_HUM                 7   //7
 
+    #define SFX_HIT_1               8   //8
+    #define SFX_HIT_2               9   //9
+    #define SFX_HIT_3               10  //10
+    #define SFX_HIT_4               11  //11
 
-// FOLDER_KYLOREN_SFX      
-    #define SFX_KYLO_IGNITE_AND_HUM      c
-    #define SFX_KYLO_RETRACT             b
-    #define SFX_KYLO_HUM                 a
+    #define SFX_CLASH_1             12  //12
+    #define SFX_CLASH_2             13  //13
+    #define SFX_CLASH_3             14  //14
+
 
         
-
-
-
-
-
-
-
-void setSFXPack(String name)
-{
-    switch (1)
-    {
-    case 1:
-
-        break;
-    
-    default:
-        break;
-    }
-}
-
 #endif
