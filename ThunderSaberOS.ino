@@ -43,13 +43,14 @@ Son revizyon: 2024
 
 /*---------- İç Değişkenler ----------*/       //Elle DEĞİŞTİRİLMEMESİ gereken değişkenler.
 
-CRGB colorPresets[8] = {CRGB::Blue, CRGB::Blue, CRGB::Green, CRGB::Purple, CRGB::Yellow, CRGB::White, CRGB::Red, CRGB::Red};
+CRGB colorPresets[7] = {CRGB(0, 0, 255), CRGB(0, 255, 0), CRGB(0, 0, 255), CRGB(255, 255, 0), CRGB(255, 0, 255),
+                        CRGB(255, 255, 255), CRGB(255, 0, 0)};
 CRGB currentBladeColor;
-byte currentColorPresetIndex = 1;
+byte colorPresetIndex = 1;
 byte movementValue;
 byte internalVolume, prevInternalVolume;   
 byte errorCounter = 0, buttonClickCount = 0;
-byte brightness;
+byte brightness, flickerBrightness;
 byte randomBrightness;
 byte unstableLedToFlicker;
 sensors_event_t accel, gyro, temp;
@@ -65,7 +66,7 @@ bool soundFading = false, moving = false, colorChangeOverride = false, holdingBu
 /*---------- Objeler ----------*/
 
 SoftwareSerial FPSerial(/*tx =*/11, /*rx =*/10);
-CRGB led[NUM_LEDS];
+CRGB leds[NUM_LEDS];
 DFPlayerMini_Fast df;
 Adafruit_MPU6050 mpu;
 
@@ -73,15 +74,18 @@ Adafruit_MPU6050 mpu;
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
 //IŞIK
-bool bladeIsUnstable = false;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
+byte bladeIsUnstable = true;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
 byte unstabilityIntensity = 60;                 //Aynı anda yakıp söndürülecek led sayısı.
 byte unstableFlickerFreqLimit = 1;          //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 byte unstableFlickerBrightnessLimit = 255;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı üst sınırı.
 
-CRGB bladeColor(colorPresets[currentColorPresetIndex]); //Bıçak rengi.
+CRGB bladeColor; //Bıçak rengi.
+byte customBladeColor_R = 255;
+byte customBladeColor_G = 255;
+byte customBladeColor_B = 255;
 
 byte flickerFreqLimit = 100;           //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
-byte flickerBrightness = 75;           //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
+byte flickerBrightnessPercent = 75;    //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
 
 byte ignitionSpeed = 5;                //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
 byte ledPerStep = 2;                   //Her ateşleme adımında yakılacak LED miktarı.
@@ -101,12 +105,13 @@ byte maxMotorPower = 255;              //Motorun çıkabileceği maksimum güç,
 
 //BUTON
 int bladeSwitchCooldownLenght = 1500;  //Ateşleme tetiklendikten sonra yeniden tetiklenebilmesi için geçmesi gereken gereken süre (ms).
-int mainButtonFunctionLenght = 500;    //Ana butona basıldıktan sonra başka fonksiyonları tetiklemek için arka arkaya basmalar arasındaki max süre (ms).
+int mainButtonFunctionLenght = 400;    //Ana butona basıldıktan sonra başka fonksiyonları tetiklemek için arka arkaya basmalar arasındaki max süre (ms).
 
-byte configurableVars[14] = 
-{42, bladeIsUnstable, unstabilityIntensity, bladeColor.r, bladeColor.g, bladeColor.b, flickerFreqLimit, 
-flickerBrightness, ignitionSpeed, ledPerStep, idleVolume, soundPackIndex, idleMotorPower, maxMotorPower};
-
+byte* configurableParameters[MEMORY_ADRESS_COUNT+1] = 
+{&colorPresetIndex, &bladeIsUnstable, &unstabilityIntensity,
+&customBladeColor_R, &customBladeColor_G, &customBladeColor_B,
+&flickerFreqLimit, &flickerBrightnessPercent, &ignitionSpeed, 
+&ledPerStep, &idleVolume, &soundPackIndex, &idleMotorPower, &maxMotorPower};
 
 
 /*---------- Başlangıç Fonksiyonları ----------*/
@@ -115,10 +120,9 @@ flickerBrightness, ignitionSpeed, ledPerStep, idleVolume, soundPackIndex, idleMo
 //MARK:RememberChoices
 void rememberChoices()
 {
-  currentColorPresetIndex = EEPROM.read(COLOR_PRESET_MEMORY);
-  bladeColor = colorPresets[currentColorPresetIndex];
-  bladeIsUnstable = currentColorPresetIndex == 8;
-  if (currentColorPresetIndex == 0)
+  colorPresetIndex = EEPROM.read(COLOR_PRESET_MEMORY);
+  bladeColor = colorPresets[colorPresetIndex];
+  if (colorPresetIndex == 0)
   {
     applyPreset(EEPROM.read(CUSTOM_PRESET_MEMORY));
   }
@@ -139,14 +143,11 @@ void setPins()
 //MARK:LedIntialize
 void ledInitialize()
 {
-  FastLED.addLeds<CHIPSET, BLADE_LED_PIN, GRB>(led, NUM_LEDS);
-  for (byte i; i <= NUM_LEDS; i++)
-  {
-    led[i] = CRGB::Black;
-  }          
-  FastLED.show();
-  brightness = 65025 / (bladeColor.r + bladeColor.g + bladeColor.b);
+  FastLED.addLeds<CHIPSET, BLADE_LED_PIN, GRB>(leds, NUM_LEDS);
+  fill_solid(leds, NUM_LEDS, CRGB::Black);
+  brightness = 255; //65025 / (bladeColor.r + bladeColor.g + bladeColor.b);
   FastLED.setBrightness(brightness);
+  FastLED.show();
   randomSeed(analogRead(0));
 }
 
@@ -251,10 +252,10 @@ void loop()
 {
   //Döngü rutini:
   checkMainButton();
-  switchBlade();
   flicker();
   fadeSound();
   soundEngine();
+  switchBlade();
 }
 
 
@@ -265,14 +266,13 @@ void loop()
 //MARK:CheckMainButton
 void checkMainButton()
 {
-  if ((millis() - mainButtonFunctionTimer > mainButtonFunctionLenght) && buttonClickCount != 0 && holdingButton)
+  if ((millis() - mainButtonFunctionTimer > mainButtonFunctionLenght+1000) && buttonClickCount != 0 && holdingButton)
   {
     applyPreset(buttonClickCount);
-    colorChangeOverride = true;
-    startSwitchingBlade();
+    sSB_Override();
     buttonClickCount = 0;
   }
-  else if ((millis() - mainButtonFunctionTimer > mainButtonFunctionLenght) && buttonClickCount != 0)
+  else if ((millis() - mainButtonFunctionTimer > mainButtonFunctionLenght) && buttonClickCount != 0 && !holdingButton)
   {
     switch (buttonClickCount)
     {
@@ -291,9 +291,9 @@ void checkMainButton()
     buttonClickCount = 0;
   }
 
-  if (!digitalRead(MAIN_BUTTON_PIN)) {mainButtonState = false; return;}
+  if (!digitalRead(MAIN_BUTTON_PIN)) {mainButtonState = false; holdingButton = false; return;}
   if (mainButtonState) {holdingButton = true; return;}
-  if (digitalRead(MAIN_BUTTON_PIN) && !mainButtonState) {mainButtonState = true; holdingButton = false;}
+  if (digitalRead(MAIN_BUTTON_PIN) && !mainButtonState) {mainButtonState = true;}
 
   buttonClickCount++;
   mainButtonFunctionTimer = millis();
@@ -303,40 +303,51 @@ void checkMainButton()
 //MARK:ApplyPreset
 void applyPreset(byte presetIndex)
 {
-  currentColorPresetIndex = 0;
-  EEPROM.update(COLOR_PRESET_MEMORY, currentColorPresetIndex);
+  colorPresetIndex = 0;
+  EEPROM.update(COLOR_PRESET_MEMORY, colorPresetIndex);
   EEPROM.update(CUSTOM_PRESET_MEMORY, presetIndex);
 
-  bladeIsUnstable = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY) == 1;
-
-  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
+  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
   {
-    configurableVars[i] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + i);
+    *configurableParameters[i] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + i);
 
     #if DEBUG
     Serial.print(F(">"));
     Serial.print(i);
-    Serial.println(F(". Parametre uygulandi."));
+    Serial.print(F(". Parametre uygulandi: "));
+    Serial.println(*configurableParameters[i]);
     #endif
   }
+
+  bladeColor = CRGB(customBladeColor_R, customBladeColor_G, customBladeColor_B);
+
+  #if DEBUG
+  Serial.print(presetIndex);
+  Serial.println(F(". On ayar uygulandi"));
+  #endif
 }
 
 
 //MARK:SavePreset
+//indexleme 1'den başlar.
 void savePreset(byte presetIndex)    //Windows uygulamasını yapana kadar geçici preset kaydetme fonksiyonu.
 {
-  EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY, bladeIsUnstable ? 1:0);
-
-  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
+  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
   {
-    EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + i, configurableVars[i]);
+    EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + i, *configurableParameters[i]);
 
     #if DEBUG
     Serial.print(F(">"));
     Serial.print(i);
-    Serial.println(F(". Parametre güncellendi."));
+    Serial.print(F(". Parametre guncellendi: "));
+    Serial.println(*configurableParameters[i]);
     #endif
   }
+  #if DEBUG
+  Serial.print(presetIndex);
+  Serial.println(F(". On ayar yuvasi yazildi."));
+  #endif
+  delay(1000);
 }
 
 
@@ -359,6 +370,7 @@ void startSwitchingBlade()
     internalVolume = 30;
     analogWrite(MOTOR_PIN, maxMotorPower);
     soundFadeMillis = millis();
+    flickerBrightness = brightness * flickerBrightnessPercent / 100; 
 
     #if DEBUG
     digitalWrite(STATUS_LED, 1);
@@ -383,22 +395,35 @@ void startSwitchingBlade()
 
   switchingBlade = true;
 }
+
+
+//MARK:SS_Override
+//Bıçak zaten açıksa ve renk değiştirilicekse kapanmayı geçersiz kılar.
+void sSB_Override()
+{
+  currentLed1 = 0;
+  currentLed2 = NUM_LEDS;
+  colorChangeOverride = true;
+  startSwitchingBlade();
+}
+
+
 void switchBlade()  //MARK:SwitchBlade
 {
   if (!switchingBlade || millis() - ignitionMillis < ignitionSpeed) {return;}
 
   for (int i = 0; i<ledPerStep; i++)   //Igniting
   {
-    led[currentLed1] = currentBladeColor;
-    led[currentLed2] = currentBladeColor;
+    leds[currentLed1] = currentBladeColor;
+    leds[currentLed2] = currentBladeColor;
     if (saberIsOn && currentLed1 < 58)
     {
-      led[currentLed1+1] = CRGB::White;
-      led[currentLed2-1] = CRGB::White;
-      led[currentLed1+2] = CRGB::White;    //nasıl durduğunun farkındayım bi ara düzeltecem inş.
-      led[currentLed2-2] = CRGB::White;
-      led[currentLed1+3] = CRGB::White;
-      led[currentLed2-3] = CRGB::White;
+      leds[currentLed1+1] = CRGB::White;
+      leds[currentLed2-1] = CRGB::White;
+      leds[currentLed1+2] = CRGB::White;    //nasıl durduğunun farkındayım bi ara düzeltecem inş.
+      leds[currentLed2-2] = CRGB::White;
+      leds[currentLed1+3] = CRGB::White;
+      leds[currentLed2-3] = CRGB::White;
     }
 
     if (saberIsOn)
@@ -456,10 +481,9 @@ void switchBlade()  //MARK:SwitchBlade
 void flicker()  //MARK:Flicker
 {
   if (bladeIsUnstable) {unstableBladeFlicker(); return;}
-
-  if ((switchingBlade || saberIsOn) && (millis() - flickerMillis > randomFlicker))
+  if ((saberIsOn || switchingBlade) && (millis() - flickerMillis > randomFlicker))
   {
-    randomFlicker =  random(0, flickerFreqLimit);
+    randomFlicker = random(0, flickerFreqLimit);
     if (!flickered)
     {
       FastLED.setBrightness(brightness);
@@ -467,7 +491,7 @@ void flicker()  //MARK:Flicker
     }
     else
     {
-      FastLED.setBrightness(brightness * flickerBrightness / 100);
+      FastLED.setBrightness(flickerBrightness);
       flickered = false;
     }
 
@@ -489,10 +513,10 @@ void unstableBladeFlicker()
       for (byte i = 0; i <= unstabilityIntensity; i++)
       {
         unstableLedToFlicker = random(0, NUM_LEDS);
-        if (led[unstableLedToFlicker] != CRGB::Black)
+        if (leds[unstableLedToFlicker] != CRGB::Black)
         {
           randomBrightness = random(1.3, unstableFlickerBrightnessLimit);
-          led[unstableLedToFlicker] = 
+          leds[unstableLedToFlicker] = 
           CRGB((currentBladeColor.r / randomBrightness), (currentBladeColor.g / randomBrightness), (currentBladeColor.b / randomBrightness));
         }
       }
@@ -502,9 +526,9 @@ void unstableBladeFlicker()
     {
       for (byte i = 0; i <= NUM_LEDS; i++)
       {
-        if (led[i] != CRGB::Black)
+        if (leds[i] != CRGB::Black)
         {
-          led[i] = currentBladeColor;
+          leds[i] = currentBladeColor;
         }
       }
       flickered = false;
@@ -532,19 +556,17 @@ void setBladeColor(CRGB colorpreset)
 //MARK:ChangeBladeColor
 void changeBladeColor()
 {
-  currentColorPresetIndex++;
+  colorPresetIndex++;
+  if (bladeColor == colorPresets[colorPresetIndex]) {colorPresetIndex++;}
+  if (colorPresetIndex > 6) {colorPresetIndex = 1;}
+  bladeColor = colorPresets[colorPresetIndex];
+  // brightness = 65025 / (bladeColor.r + bladeColor.g + bladeColor.b);
+  // FastLED.setBrightness(brightness);
+  // FastLED.show();
 
-  if (currentColorPresetIndex > 8) {currentColorPresetIndex = 1;}
-  bladeIsUnstable = currentColorPresetIndex == 8;
-  bladeColor = colorPresets[currentColorPresetIndex];
-  
-  if (saberIsOn)
-  {
-    colorChangeOverride = true;
-    startSwitchingBlade();
-  }
+  if (saberIsOn) {sSB_Override();}
 
-  EEPROM.update(COLOR_PRESET_MEMORY, currentColorPresetIndex);
+  EEPROM.update(COLOR_PRESET_MEMORY, colorPresetIndex);
 
   #if DEBUG
   Serial.println(F(">Renk kaydedildi."));
@@ -636,11 +658,7 @@ void haltUntilEndOfTrack()
 //false = out, true = in
 void fadeSound()
 {
-  if (!soundFading || internalVolume < idleVolume || internalVolume > 30)
-  {
-    soundFading = false;
-    return;
-  }
+  if (!soundFading) {return;}
 
 
   if (!saberIsOn && (millis() - soundFadeMillis > 50))
@@ -648,7 +666,7 @@ void fadeSound()
     internalVolume = map(currentLed1, -1, 61, 31, idleVolume);
     df.volume(internalVolume);
     #if DEBUG_SOUND
-    Serial.println(internalVolume);
+    //Serial.println(internalVolume);
     #endif
     soundFadeMillis = millis();
   }
@@ -661,11 +679,17 @@ void fadeSound()
     soundFadeMillis = millis();
 
     #if DEBUG_SOUND
-    Serial.println(internalVolume);
+    //Serial.println(internalVolume);
     #endif
   }
 
   analogWrite(MOTOR_PIN, map(internalVolume, idleVolume, 30, idleMotorPower, maxMotorPower));
+
+  if (internalVolume < idleVolume || internalVolume > 30)
+  {
+    soundFading = false;
+    analogWrite(MOTOR_PIN, idleMotorPower);
+  }
 }
 
 

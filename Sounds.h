@@ -14,8 +14,8 @@
 
 // FOLDER_SABER_SFX
     #define SFX_IGNITE_AND_HUM      5   //5
-    #define SFX_RETRACT             6   //6
-    #define SFX_HUM                 7   //7
+    #define SFX_RETRACT             7   //6
+    #define SFX_HUM                 6   //7
 
     #define SFX_HIT_1               8   //8
     #define SFX_HIT_2               9   //9
