@@ -5,6 +5,9 @@
 MPU 6050, DFPlayer mini ve 60LED/m WS2812B ile çalışması için tasarlanmıştır,
 arduino nano ve uno üzerinde test edilmiştir.
 
+Tam fonksiyonalite için;
+Yine benim tarafımdan yazılan "ThunderSaber Helper App" ile beraber çalışır.
+
 Son revizyon: 2024
 
 -Yusuf Emre Bilir
@@ -16,6 +19,7 @@ Son revizyon: 2024
 
 #include "Sounds.h"
 #include "Memory.h"
+#include "ComCodes.h"
 
 #include <EEPROM.h>
 #include <FastLED.h>
@@ -25,8 +29,8 @@ Son revizyon: 2024
 
 /*---------- Pre-Proccessor Değerler ----------*/
 
-#define DEBUG true                  //Seri monitör vs. için debug ayarı. Açık olması Arduinoyu bir miktar yavaşlatır.
-#define DEBUG_SOUND true
+#define DEBUG false                  //Seri monitör vs. için debug ayarı. Açık olması Arduinoyu bir miktar yavaşlatır.
+#define DEBUG_SOUND false
 
 #define NUM_LEDS 120                //Bıçaktaki LED sayısı.
 #define CHIPSET WS2812B             //LED şerit tipi.
@@ -56,11 +60,13 @@ byte unstableLedToFlicker;
 sensors_event_t accel, gyro, temp;
 byte sumAccel, sumGyro;
 unsigned long ignitionMillis, flickerMillis, soundEngineMillis, soundFadeMillis;
-unsigned long ignitionSoundFadeTimer, bladeSwitchCooldownTimer, mainButtonFunctionTimer;
+unsigned long ignitionSoundFadeTimer, bladeSwitchCooldownTimer, mainButtonFunctionTimer, appSerialTimer;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
 bool saberIsOn = false, mainButtonState = false, switchingBlade = false, flickered = false;
 bool soundFading = false, moving = false, colorChangeOverride = false, holdingButton = false;
+void emptyFunction(){}; //Eğer app bağlantısı yoksa loop içinde kaynak harcamamak için delegate'e atanacak fonk.
+void (*appInterfaceDelegate)() = emptyFunction; //Loop içinde dönecek app arayüzünün delegate fonksiyonu.
 
 
 /*---------- Objeler ----------*/
@@ -74,7 +80,7 @@ Adafruit_MPU6050 mpu;
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
 //IŞIK
-byte bladeIsUnstable = true;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
+byte bladeIsUnstable = 0;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
 byte unstabilityIntensity = 60;                 //Aynı anda yakıp söndürülecek led sayısı.
 byte unstableFlickerFreqLimit = 1;          //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 byte unstableFlickerBrightnessLimit = 255;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı üst sınırı.
@@ -115,6 +121,45 @@ byte* configurableParameters[MEMORY_ADRESS_COUNT+1] =
 
 
 /*---------- Başlangıç Fonksiyonları ----------*/
+
+
+//MARK:TryConnectToApp
+void tryConnectToApp()
+{
+  for (byte i = 0; i < 3; i++)
+  {
+    Serial.write(COM_OFFER_CODE); //Uygulamaya çağrı gönder.
+    delay(50);
+    if (Serial.read() == COM_EXPECTED_RESPONSE_CODE)  //Beklenen cevap gelirse;
+    {
+      Serial.write(COM_SUCCESSFULL);  //Uygulamaya bağlandığını bildir.
+      appInterfaceDelegate = changeParametersWithApp; //App bağlantısı varsa delegate'e gerçek fonskiyonu ata.
+
+      #if DEBUG
+      Serial.println(F("Windows uygulamasina baglandi"));
+      #endif
+
+      return; //Fonksiyondan çık.
+    }
+    else
+    {
+      Serial.write(COM_FAILED); //Uygulamaya beklentinin karşılanmadığını bildir.
+
+      #if DEBUG
+      Serial.println(F("Windows uygulama baglantisi basarisiz yeniden deneniyor."));
+      #endif
+
+      delay(50); //Beklenen cevap gelmezse biraz bekle ve yeniden dene.
+    }
+  }
+
+  //3 kere denenmesine rağmen uygulamaya bağlanamazsa denemeyi bırak:
+  #if DEBUG
+  Serial.println(F("Windows uygulamasi tespit edilemedi. Rutine devam ediliyor."));
+  #endif
+
+  Serial.end();
+}
 
 
 //MARK:RememberChoices
@@ -237,6 +282,7 @@ void setup()
 {
   //Başlangıç rutini:
   Serial.begin(9600);
+  tryConnectToApp();
   setPins();
   rememberChoices();
   DFPlayerInitialize();
@@ -256,6 +302,7 @@ void loop()
   fadeSound();
   soundEngine();
   switchBlade();
+  appInterfaceDelegate();
 }
 
 
@@ -307,7 +354,8 @@ void applyPreset(byte presetIndex)
   EEPROM.update(COLOR_PRESET_MEMORY, colorPresetIndex);
   EEPROM.update(CUSTOM_PRESET_MEMORY, presetIndex);
 
-  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
+  *configurableParameters[1] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY) == 1;
+  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
   {
     *configurableParameters[i] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + i);
 
@@ -332,7 +380,8 @@ void applyPreset(byte presetIndex)
 //indexleme 1'den başlar.
 void savePreset(byte presetIndex)    //Windows uygulamasını yapana kadar geçici preset kaydetme fonksiyonu.
 {
-  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
+  EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY, *configurableParameters[1] ? (byte)1:(byte)0);
+  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
   {
     EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + i, *configurableParameters[i]);
 
@@ -349,6 +398,47 @@ void savePreset(byte presetIndex)    //Windows uygulamasını yapana kadar geçi
   #endif
   delay(1000);
 }
+
+
+//MARK:ChangeWithApp
+void changeParametersWithApp()
+{
+  if(Serial.available() != 2) {return;}
+  
+  byte parameterIndex = Serial.read();
+  byte value = Serial.read();
+
+  if (parameterIndex == COM_SAVE_PRESET)
+  {
+    #if DEBUG
+    Serial.print(F("Değerler "));
+    Serial.print(value);
+    Serial.println(F(". ayar yuvasina kaydedildiliyor...\n"));
+    #endif
+
+    savePreset(value);
+  }
+  else
+  {
+    *configurableParameters[parameterIndex] = value;
+
+    if (parameterIndex == 3, 4, 5)
+    {
+      bladeColor = CRGB(customBladeColor_R, customBladeColor_G, customBladeColor_B);
+      fill_solid(leds, NUM_LEDS, bladeColor);
+    }
+    
+
+    #if DEBUG
+    Serial.print(parameterIndex);
+    Serial.print(F(". ayar '"));
+    Serial.print(value);
+    Serial.println(F("' olarak guncellendi."));
+    #endif
+  }
+}
+
+
 
 
 
