@@ -51,15 +51,16 @@
             this.label9 = new System.Windows.Forms.Label();
             this.volumeTB = new System.Windows.Forms.TrackBar();
             this.label10 = new System.Windows.Forms.Label();
-            this.trackBar10 = new System.Windows.Forms.TrackBar();
+            this.soundPackTB = new System.Windows.Forms.TrackBar();
             this.label11 = new System.Windows.Forms.Label();
             this.idleMotorTB = new System.Windows.Forms.TrackBar();
             this.label12 = new System.Windows.Forms.Label();
             this.maxMotorTB = new System.Windows.Forms.TrackBar();
             this.uploadButton = new System.Windows.Forms.Button();
-            this.presetSelector = new System.Windows.Forms.NumericUpDown();
             this.bladeColorVisualizer = new System.Windows.Forms.PictureBox();
             this.parameterGroup = new System.Windows.Forms.GroupBox();
+            this.label1 = new System.Windows.Forms.Label();
+            this.presetComboBox = new System.Windows.Forms.ComboBox();
             ((System.ComponentModel.ISupportInitialize)(this.unstableDensityTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.bladeRedTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.bladeGreenTB)).BeginInit();
@@ -69,11 +70,11 @@
             ((System.ComponentModel.ISupportInitialize)(this.ignitionSpeedTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.ledPerStepTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.volumeTB)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.trackBar10)).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)(this.soundPackTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.idleMotorTB)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.maxMotorTB)).BeginInit();
-            ((System.ComponentModel.ISupportInitialize)(this.presetSelector)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.bladeColorVisualizer)).BeginInit();
+            this.parameterGroup.SuspendLayout();
             this.SuspendLayout();
             // 
             // label6
@@ -296,12 +297,13 @@
             this.label10.TabIndex = 21;
             this.label10.Text = "Ses paketi";
             // 
-            // trackBar10
+            // soundPackTB
             // 
-            this.trackBar10.Location = new System.Drawing.Point(531, 76);
-            this.trackBar10.Name = "trackBar10";
-            this.trackBar10.Size = new System.Drawing.Size(104, 45);
-            this.trackBar10.TabIndex = 20;
+            this.soundPackTB.Location = new System.Drawing.Point(531, 76);
+            this.soundPackTB.Name = "soundPackTB";
+            this.soundPackTB.Size = new System.Drawing.Size(104, 45);
+            this.soundPackTB.TabIndex = 20;
+            this.soundPackTB.Scroll += new System.EventHandler(this.soundPackTB_Scroll);
             // 
             // label11
             // 
@@ -359,15 +361,6 @@
             this.uploadButton.UseVisualStyleBackColor = true;
             this.uploadButton.Click += new System.EventHandler(this.uploadButton_Click);
             // 
-            // presetSelector
-            // 
-            this.presetSelector.Location = new System.Drawing.Point(559, 316);
-            this.presetSelector.Name = "presetSelector";
-            this.presetSelector.RightToLeft = System.Windows.Forms.RightToLeft.No;
-            this.presetSelector.Size = new System.Drawing.Size(86, 20);
-            this.presetSelector.TabIndex = 29;
-            this.presetSelector.ValueChanged += new System.EventHandler(this.presetSelector_ValueChanged);
-            // 
             // bladeColorVisualizer
             // 
             this.bladeColorVisualizer.BackColor = System.Drawing.Color.Black;
@@ -379,12 +372,39 @@
             // 
             // parameterGroup
             // 
+            this.parameterGroup.Controls.Add(this.label1);
+            this.parameterGroup.Controls.Add(this.presetComboBox);
             this.parameterGroup.Location = new System.Drawing.Point(5, 55);
             this.parameterGroup.Name = "parameterGroup";
             this.parameterGroup.Size = new System.Drawing.Size(785, 364);
             this.parameterGroup.TabIndex = 31;
             this.parameterGroup.TabStop = false;
             this.parameterGroup.Text = "Parametreler";
+            // 
+            // label1
+            // 
+            this.label1.AutoSize = true;
+            this.label1.Location = new System.Drawing.Point(556, 265);
+            this.label1.Name = "label1";
+            this.label1.Size = new System.Drawing.Size(80, 13);
+            this.label1.TabIndex = 33;
+            this.label1.Text = "Ön ayar yuvası:";
+            // 
+            // presetComboBox
+            // 
+            this.presetComboBox.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
+            this.presetComboBox.FormattingEnabled = true;
+            this.presetComboBox.Items.AddRange(new object[] {
+            "1",
+            "2",
+            "3",
+            "4",
+            "5"});
+            this.presetComboBox.Location = new System.Drawing.Point(642, 262);
+            this.presetComboBox.MaxDropDownItems = 5;
+            this.presetComboBox.Name = "presetComboBox";
+            this.presetComboBox.Size = new System.Drawing.Size(121, 21);
+            this.presetComboBox.TabIndex = 32;
             // 
             // Form1
             // 
@@ -393,13 +413,12 @@
             this.ClientSize = new System.Drawing.Size(800, 450);
             this.Controls.Add(this.label10);
             this.Controls.Add(this.bladeColorVisualizer);
-            this.Controls.Add(this.presetSelector);
             this.Controls.Add(this.uploadButton);
             this.Controls.Add(this.label12);
             this.Controls.Add(this.maxMotorTB);
             this.Controls.Add(this.label11);
             this.Controls.Add(this.idleMotorTB);
-            this.Controls.Add(this.trackBar10);
+            this.Controls.Add(this.soundPackTB);
             this.Controls.Add(this.label9);
             this.Controls.Add(this.volumeTB);
             this.Controls.Add(this.label8);
@@ -432,11 +451,12 @@
             ((System.ComponentModel.ISupportInitialize)(this.ignitionSpeedTB)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.ledPerStepTB)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.volumeTB)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.trackBar10)).EndInit();
+            ((System.ComponentModel.ISupportInitialize)(this.soundPackTB)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.idleMotorTB)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.maxMotorTB)).EndInit();
-            ((System.ComponentModel.ISupportInitialize)(this.presetSelector)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.bladeColorVisualizer)).EndInit();
+            this.parameterGroup.ResumeLayout(false);
+            this.parameterGroup.PerformLayout();
             this.ResumeLayout(false);
             this.PerformLayout();
 
@@ -464,17 +484,18 @@
         private System.Windows.Forms.Label label9;
         private System.Windows.Forms.TrackBar volumeTB;
         private System.Windows.Forms.Label label10;
-        private System.Windows.Forms.TrackBar trackBar10;
+        private System.Windows.Forms.TrackBar soundPackTB;
         private System.Windows.Forms.Label label11;
         private System.Windows.Forms.TrackBar idleMotorTB;
         private System.Windows.Forms.Label label12;
         private System.Windows.Forms.TrackBar maxMotorTB;
         private System.Windows.Forms.Button uploadButton;
-        private System.Windows.Forms.NumericUpDown presetSelector;
         private System.Windows.Forms.PictureBox bladeColorVisualizer;
         private System.Windows.Forms.Label conStatus;
         private System.Windows.Forms.Label label6;
         private System.Windows.Forms.GroupBox parameterGroup;
+        private System.Windows.Forms.ComboBox presetComboBox;
+        private System.Windows.Forms.Label label1;
     }
 }
 

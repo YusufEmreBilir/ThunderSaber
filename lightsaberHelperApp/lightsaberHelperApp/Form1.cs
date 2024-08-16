@@ -76,7 +76,6 @@ namespace lightsaberHelperApp
                     }
                     System.Threading.Thread.Sleep(50);
                 }
-                parameterGroup.Invoke((MethodInvoker)delegate { parameterGroup.Enabled = false; });
                 uploadButton.Invoke((MethodInvoker)delegate { uploadButton.Enabled = false; });
                 return;
             }
@@ -94,7 +93,6 @@ namespace lightsaberHelperApp
                         if ((byte)serialPort1.ReadByte() == COM_SUCCESSFULL)
                         {
                             UpdateLabelText("Kılıç hazır.Bağlantı başarılı.");
-                            parameterGroup.Invoke((MethodInvoker)delegate { parameterGroup.Enabled = true; });
                             uploadButton.Invoke((MethodInvoker)delegate { uploadButton.Enabled = true; });
                             connected = true;
                         }
@@ -159,15 +157,13 @@ namespace lightsaberHelperApp
 
         void DisableAll()
         {
-            conStatus.Invoke((MethodInvoker)delegate
-            {
-                uploadButton.Enabled = true;
-            });
+            
         }
 
         private void uploadButton_Click(object sender, EventArgs e)
         {
-
+            if (presetComboBox.SelectedItem == null) { return; }
+            SendParameterData(0xBB, (int)presetComboBox.SelectedItem);
         }
         
 
@@ -207,42 +203,44 @@ namespace lightsaberHelperApp
 
         private void flickerFreqTB_Scroll(object sender, EventArgs e)
         {
-
+            SendParameterData(0x06, flickerFreqTB.Value);
         }
 
         private void flickerBrtnsTB_Scroll(object sender, EventArgs e)
         {
-
+            SendParameterData(0x07, flickerBrtnsTB.Value);
         }
 
         private void ignitionSpeedTB_Scroll(object sender, EventArgs e)
         {
-
+            SendParameterData(0x08, ignitionSpeedTB.Value);
         }
 
         private void ledPerStepTB_Scroll(object sender, EventArgs e)
         {
-
+            SendParameterData(0x09, ledPerStepTB.Value);
         }
 
         private void volumeTB_Scroll(object sender, EventArgs e)
         {
-
+            SendParameterData(0x0A, volumeTB.Value);
+        }
+        private void soundPackTB_Scroll(object sender, EventArgs e)
+        {
+            SendParameterData(0x0B, soundPackTB.Value);
         }
 
         private void idleMotorTB_Scroll(object sender, EventArgs e)
         {
+            SendParameterData(0x0C, idleMotorTB.Value);
             maxMotorTB.Minimum = idleMotorTB.Value;
+            if (maxMotorTB.Value < idleMotorTB.Value) { maxMotorTB.Value = idleMotorTB.Value; }
+            SendParameterData(0x0D, maxMotorTB.Value);
         }
 
         private void maxMotorTB_Scroll(object sender, EventArgs e)
         {
-
-        }
-
-        private void presetSelector_ValueChanged(object sender, EventArgs e)
-        {
-
+            SendParameterData(0x0D, maxMotorTB.Value);
         }
 
     }

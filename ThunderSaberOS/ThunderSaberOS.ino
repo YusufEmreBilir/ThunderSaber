@@ -5,7 +5,7 @@
 MPU 6050, DFPlayer mini ve 60LED/m WS2812B ile çalışması için tasarlanmıştır,
 arduino nano ve uno üzerinde test edilmiştir.
 
-Tam fonksiyonalite için;
+Parametreleri HotPlug windows üzerinden GUI ile kontrol etmek için;
 Yine benim tarafımdan yazılan "ThunderSaber Helper App" ile beraber çalışır.
 
 Son revizyon: 2024
@@ -13,6 +13,14 @@ Son revizyon: 2024
 -Yusuf Emre Bilir
 
 */
+
+
+/*TODO:
+-Clash tespiti & efekti
+-Hit tespiti & efekti
+-Windows uygulamasını tamamla
+-Smooth swing için adaptif idle ses sistemi
+
 
 
 /*---------- Kütüphaneler ----------*/
@@ -47,15 +55,15 @@ Son revizyon: 2024
 
 /*---------- İç Değişkenler ----------*/       //Elle DEĞİŞTİRİLMEMESİ gereken değişkenler.
 
-CRGB colorPresets[7] = {CRGB(0, 0, 255), CRGB(0, 255, 0), CRGB(0, 0, 255), CRGB(255, 255, 0), CRGB(255, 0, 255),
-                        CRGB(255, 255, 255), CRGB(255, 0, 0)};
+CRGB colorPresets[7] = {CRGB(0, 0, 255), CRGB(0, 255, 0), CRGB(0, 0, 255), 
+CRGB(255, 255, 0), CRGB(255, 0, 255), CRGB(255, 255, 255), CRGB(255, 0, 0)};
 CRGB currentBladeColor;
 byte colorPresetIndex = 1;
 byte movementValue;
 byte internalVolume, prevInternalVolume;   
 byte errorCounter = 0, buttonClickCount = 0;
 byte brightness, flickerBrightness;
-byte randomBrightness;
+byte UflickerBrightnessR, UflickerBrightnessG, UflickerBrightnessB;
 byte unstableLedToFlicker;
 sensors_event_t accel, gyro, temp;
 byte sumAccel, sumGyro;
@@ -71,7 +79,7 @@ void (*appInterfaceDelegate)() = emptyFunction; //Loop içinde dönecek app aray
 
 /*---------- Objeler ----------*/
 
-SoftwareSerial FPSerial(/*tx =*/11, /*rx =*/10);
+SoftwareSerial FPSerial(/*tx =*/10, /*rx =*/11);
 CRGB leds[NUM_LEDS];
 DFPlayerMini_Fast df;
 Adafruit_MPU6050 mpu;
@@ -80,10 +88,9 @@ Adafruit_MPU6050 mpu;
 /*---------- Parametreler ----------*/    //Belli özellikleri kişiselleştirmek için gelişmiş seçenekler.
 
 //IŞIK
-byte bladeIsUnstable = 0;               //Bıçağın dengesizce yanıp sönmesini sağlar (kylo ren efekti).
-byte unstabilityIntensity = 60;                 //Aynı anda yakıp söndürülecek led sayısı.
-byte unstableFlickerFreqLimit = 1;          //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
-byte unstableFlickerBrightnessLimit = 255;  //Bıçağın titreme yaparken dönüşüm yapacağı parlaklık çarpanı üst sınırı.
+byte bladeIsUnstable = 0;                     //Bıçağın dengesizce yanıp sönmesini sağlar, 0 yada 1 (kylo ren efekti).
+byte unstabilityIntensity = 60;               //Aynı anda yakıp söndürülecek led sayısı.
+byte unstableFlickerFreqLimit = 1;            //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 
 CRGB bladeColor; //Bıçak rengi.
 byte customBladeColor_R = 255;
@@ -158,7 +165,7 @@ void tryConnectToApp()
   Serial.println(F("Windows uygulamasi tespit edilemedi. Rutine devam ediliyor."));
   #endif
 
-  Serial.end();
+  //Serial.end();
 }
 
 
@@ -190,9 +197,10 @@ void ledInitialize()
 {
   FastLED.addLeds<CHIPSET, BLADE_LED_PIN, GRB>(leds, NUM_LEDS);
   fill_solid(leds, NUM_LEDS, CRGB::Black);
-  brightness = 255; //65025 / (bladeColor.r + bladeColor.g + bladeColor.b);
+  brightness = 255;
   FastLED.setBrightness(brightness);
   FastLED.show();
+  preCalculateFlickerBrightness();
   randomSeed(analogRead(0));
 }
 
@@ -307,7 +315,7 @@ void loop()
 
 
 
-/*---------- Çok İşlevli Fonksiyonlar ----------*/
+/*---------- Sistem Fonksiyonlar ----------*/
 
 
 //MARK:CheckMainButton
@@ -354,8 +362,7 @@ void applyPreset(byte presetIndex)
   EEPROM.update(COLOR_PRESET_MEMORY, colorPresetIndex);
   EEPROM.update(CUSTOM_PRESET_MEMORY, presetIndex);
 
-  *configurableParameters[1] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY) == 1;
-  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
+  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
   {
     *configurableParameters[i] = EEPROM.read(MEMORY_ADRESS_COUNT*presetIndex + i);
 
@@ -378,10 +385,9 @@ void applyPreset(byte presetIndex)
 
 //MARK:SavePreset
 //indexleme 1'den başlar.
-void savePreset(byte presetIndex)    //Windows uygulamasını yapana kadar geçici preset kaydetme fonksiyonu.
+void savePreset(byte presetIndex)    //Preset kaydetme fonksiyonu.
 {
-  EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + UNSTABLE_BLADE_MEMORY, *configurableParameters[1] ? (byte)1:(byte)0);
-  for (byte i = 2; i <= MEMORY_ADRESS_COUNT; i++)
+  for (byte i = 1; i <= MEMORY_ADRESS_COUNT; i++)
   {
     EEPROM.update(MEMORY_ADRESS_COUNT*presetIndex + i, *configurableParameters[i]);
 
@@ -410,35 +416,39 @@ void changeParametersWithApp()
 
   if (parameterIndex == COM_SAVE_PRESET)
   {
-    #if DEBUG
-    Serial.print(F("Değerler "));
-    Serial.print(value);
-    Serial.println(F(". ayar yuvasina kaydedildiliyor...\n"));
-    #endif
-
     savePreset(value);
   }
   else
   {
     *configurableParameters[parameterIndex] = value;
 
-    if (parameterIndex == 3, 4, 5)
+    if (parameterIndex == COM_BLADE_R, COM_BLADE_G, COM_BLADE_B)
     {
       bladeColor = CRGB(customBladeColor_R, customBladeColor_G, customBladeColor_B);
       fill_solid(leds, NUM_LEDS, bladeColor);
     }
-    
 
-    #if DEBUG
-    Serial.print(parameterIndex);
-    Serial.print(F(". ayar '"));
-    Serial.print(value);
-    Serial.println(F("' olarak guncellendi."));
-    #endif
+    if (parameterIndex == COM_FLICKER_BRIGHTNESS)
+    {
+      preCalculateFlickerBrightness();
+    }
+    
   }
 }
 
 
+//MARK:HitDedection
+void hitDedection()
+{
+
+}
+
+
+//MARK:ClashDedection
+void clashDedection()
+{
+
+}
 
 
 
@@ -460,7 +470,6 @@ void startSwitchingBlade()
     internalVolume = 30;
     analogWrite(MOTOR_PIN, maxMotorPower);
     soundFadeMillis = millis();
-    flickerBrightness = brightness * flickerBrightnessPercent / 100; 
 
     #if DEBUG
     digitalWrite(STATUS_LED, 1);
@@ -603,11 +612,9 @@ void unstableBladeFlicker()
       for (byte i = 0; i <= unstabilityIntensity; i++)
       {
         unstableLedToFlicker = random(0, NUM_LEDS);
-        if (leds[unstableLedToFlicker] != CRGB::Black)
+        if (leds[unstableLedToFlicker] == currentBladeColor)//CRGB::Black)
         {
-          randomBrightness = random(1.3, unstableFlickerBrightnessLimit);
-          leds[unstableLedToFlicker] = 
-          CRGB((currentBladeColor.r / randomBrightness), (currentBladeColor.g / randomBrightness), (currentBladeColor.b / randomBrightness));
+          leds[unstableLedToFlicker] = CRGB(UflickerBrightnessR, UflickerBrightnessG, UflickerBrightnessB);
         }
       }
       flickered = true;
@@ -616,7 +623,7 @@ void unstableBladeFlicker()
     {
       for (byte i = 0; i <= NUM_LEDS; i++)
       {
-        if (leds[i] != CRGB::Black)
+        if (leds[i] == CRGB(UflickerBrightnessR, UflickerBrightnessG, UflickerBrightnessB))
         {
           leds[i] = currentBladeColor;
         }
@@ -627,6 +634,16 @@ void unstableBladeFlicker()
     FastLED.show();
     flickerMillis = millis();
   }
+}
+
+
+//MARK:CalculateFlicker
+void preCalculateFlickerBrightness()
+{
+  flickerBrightness = brightness * flickerBrightnessPercent / 100;
+  UflickerBrightnessR = currentBladeColor.r * flickerBrightnessPercent / 100;
+  UflickerBrightnessG = currentBladeColor.g * flickerBrightnessPercent / 100;
+  UflickerBrightnessB = currentBladeColor.b * flickerBrightnessPercent / 100;
 }
 
 
@@ -650,9 +667,6 @@ void changeBladeColor()
   if (bladeColor == colorPresets[colorPresetIndex]) {colorPresetIndex++;}
   if (colorPresetIndex > 6) {colorPresetIndex = 1;}
   bladeColor = colorPresets[colorPresetIndex];
-  // brightness = 65025 / (bladeColor.r + bladeColor.g + bladeColor.b);
-  // FastLED.setBrightness(brightness);
-  // FastLED.show();
 
   if (saberIsOn) {sSB_Override();}
 
@@ -661,6 +675,20 @@ void changeBladeColor()
   #if DEBUG
   Serial.println(F(">Renk kaydedildi."));
   #endif
+}
+
+
+//MARK:HitEffect
+void hitEffect()
+{
+
+}
+
+
+//MARK:ClashEffect
+void clashEffect()
+{
+
 }
 
 
