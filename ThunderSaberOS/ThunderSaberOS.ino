@@ -59,16 +59,19 @@ CRGB colorPresets[7] = {CRGB(0, 0, 255), CRGB(0, 255, 0), CRGB(0, 0, 255),
 CRGB(255, 255, 0), CRGB(255, 0, 255), CRGB(255, 255, 255), CRGB(255, 0, 0)};
 CRGB currentBladeColor;
 byte colorPresetIndex = 1;
-byte movementValue;
+byte movementValue, prevMovementValue;
 byte internalVolume, prevInternalVolume;   
 byte errorCounter = 0, buttonClickCount = 0;
 byte brightness, flickerBrightness;
 byte UflickerBrightnessR, UflickerBrightnessG, UflickerBrightnessB;
 byte unstableLedToFlicker;
+byte hitEffectIndex = 0;
+bool impactEffectNeeded = false;
 sensors_event_t accel, gyro, temp;
 byte sumAccel, sumGyro;
 unsigned long ignitionMillis, flickerMillis, soundEngineMillis, soundFadeMillis;
 unsigned long ignitionSoundFadeTimer, bladeSwitchCooldownTimer, mainButtonFunctionTimer, appSerialTimer;
+unsigned long impactEffectTimer;
 unsigned int randomFlicker = 0; 
 int currentLed1 = 0, currentLed2 = NUM_LEDS - 1;
 bool saberIsOn = false, mainButtonState = false, switchingBlade = false, flickered = false;
@@ -100,6 +103,8 @@ byte customBladeColor_B = 255;
 byte flickerFreqLimit = 100;           //Bıçağın titreme frekansının üst sınırı, 0 ile bu değer arasında rastgele oluşturulur.
 byte flickerBrightnessPercent = 75;    //Bıçağın titreme yaparken düşeceği parlaklık yüzdesi.
 
+byte impactEffectLenght = 10;          //Darbe efektinin renkler arasındaki geçiş hızı (ms).
+
 byte ignitionSpeed = 5;                //Ateşleme/Geri çekme hızı, Azaldıkça hızlanır.
 byte ledPerStep = 2;                   //Her ateşleme adımında yakılacak LED miktarı.
 
@@ -119,6 +124,9 @@ byte maxMotorPower = 255;              //Motorun çıkabileceği maksimum güç,
 //BUTON
 int bladeSwitchCooldownLenght = 1500;  //Ateşleme tetiklendikten sonra yeniden tetiklenebilmesi için geçmesi gereken gereken süre (ms).
 int mainButtonFunctionLenght = 400;    //Ana butona basıldıktan sonra başka fonksiyonları tetiklemek için arka arkaya basmalar arasındaki max süre (ms).
+
+byte hitSensitivity = 10;
+byte clashBreakSensitivity = 5;
 
 byte* configurableParameters[MEMORY_ADRESS_COUNT+1] = 
 {&colorPresetIndex, &bladeIsUnstable, &unstabilityIntensity,
@@ -307,6 +315,7 @@ void loop()
   //Döngü rutini:
   checkMainButton();
   flicker();
+  impactEffect();
   fadeSound();
   soundEngine();
   switchBlade();
@@ -440,14 +449,29 @@ void changeParametersWithApp()
 //MARK:HitDedection
 void hitDedection()
 {
-
+  if (impactEffectNeeded)
+  {
+    impactEffectNeeded = clashDedection();
+  }
+  if (prevMovementValue - movementValue > hitSensitivity)
+  {
+    hitEffect();
+  }
 }
 
 
 //MARK:ClashDedection
-void clashDedection()
+bool clashDedection()
 {
-
+  if (movementValue - prevMovementValue > clashBreakSensitivity)
+  {
+    return false;
+  }
+  else
+  {
+    df.play(SFX_FILE_COUNT*soundPackIndex + SFX_CLASH_1);
+    return true;
+  }
 }
 
 
@@ -579,8 +603,9 @@ void switchBlade()  //MARK:SwitchBlade
 
 void flicker()  //MARK:Flicker
 {
+  if ((saberIsOn || switchingBlade) && impactEffectNeeded) {return;}
   if (bladeIsUnstable) {unstableBladeFlicker(); return;}
-  if ((saberIsOn || switchingBlade) && (millis() - flickerMillis > randomFlicker))
+  if (millis() - flickerMillis > randomFlicker)
   {
     randomFlicker = random(0, flickerFreqLimit);
     if (!flickered)
@@ -603,7 +628,7 @@ void flicker()  //MARK:Flicker
 //MARK:UnstableBladeFlicker
 void unstableBladeFlicker()
 {
-  if ((switchingBlade || saberIsOn) && (millis() - flickerMillis > randomFlicker))
+  if (millis() - flickerMillis > randomFlicker)
   {
     randomFlicker =  random(0, unstableFlickerFreqLimit);
 
@@ -681,14 +706,39 @@ void changeBladeColor()
 //MARK:HitEffect
 void hitEffect()
 {
+  if (hitEffectIndex >= 3) {hitEffectIndex = 0;}
+  df.play(SFX_FILE_COUNT*soundPackIndex + SFX_HIT_1 + hitEffectIndex);
+  hitEffectIndex++;
 
+  impactEffectNeeded = true;
 }
 
 
-//MARK:ClashEffect
-void clashEffect()
+//MARK:ImpactEffect
+void impactEffect()
 {
+  if (!impactEffectNeeded) {return;}
+  if (millis() - impactEffectTimer < impactEffectTimer)
+  {
+    if (leds[42] != CRGB(255, 255, 0) && leds[42] != CRGB(255, 255, 255))
+    {
+      fill_solid(leds, NUM_LEDS, CRGB(255, 255, 0));
+      FastLED.show();
+    }
+    else if (leds[42] != CRGB(255, 255, 255))
+    {
+      fill_solid(leds, NUM_LEDS, CRGB(255, 255, 255));
+      FastLED.show();
+    }
+    else
+    {
+      fill_solid(leds, NUM_LEDS, currentBladeColor);
+      FastLED.show();
+    }
 
+    impactEffectTimer = millis();
+  }
+      
 }
 
 
@@ -704,6 +754,8 @@ void soundEngine()  //MARK:SoundEngine
   sumAccel = abs(accel.acceleration.x) + abs(accel.acceleration.y) + abs(accel.acceleration.z);
   sumGyro = abs(gyro.gyro.x) + abs(gyro.gyro.y) + abs(gyro.gyro.z);
   movementValue = sumAccel + sumGyro;
+  hitDedection();
+  prevMovementValue = movementValue;
 
   if (sumAccel > 16 || sumGyro > 0.4)
   {
